@@ -122,6 +122,7 @@ class AmazonAdapter(VendorAdapter):
                 title=str(title),
                 url=str(url),
                 price=price,
+                image_url=_first(raw, "image", "image_url", "thumbnail"),
                 delivery_days=_delivery(raw),
                 rating=raw.get("rating"),
                 rating_count=_first(raw, "ratings_total", "reviews_total", "ratings_count"),

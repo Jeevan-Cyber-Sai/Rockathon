@@ -42,6 +42,7 @@ class Listing(BaseModel):
     title: str = Field(min_length=1)           # raw listing title, unmodified
     url: str = Field(min_length=1)
     price: int = Field(gt=0)                   # WHOLE RUPEES, no paise
+    image_url: str | None = None
 
     ram_gb: int | None = Field(default=None, gt=0)
     storage_gb: int | None = Field(default=None, gt=0)
@@ -57,7 +58,7 @@ class Listing(BaseModel):
 
     # --- text fields: blank and placeholder strings are not values -----------
 
-    @field_validator("processor", mode="before")
+    @field_validator("processor", "image_url", mode="before")
     @classmethod
     def _nullish_to_none(cls, v):
         if isinstance(v, str) and v.strip().lower() in _NULLISH:

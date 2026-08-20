@@ -24,6 +24,12 @@ log = logging.getLogger("api.main")
 # Keep references so asyncio doesn't garbage-collect in-flight background tasks.
 _background_tasks: set[asyncio.Task] = set()
 
+# Last known pipeline stage per run, process-local (same lifetime as the
+# WebSocket bus). SQLite is the durable record; this only closes the gap
+# where a field like parsed_rules reads back null because the run hasn't
+# reached that stage yet, not because parsing found nothing.
+_last_stage: dict[str, str] = {}
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -40,6 +46,13 @@ def _spawn(coro) -> None:
     task.add_done_callback(_background_tasks.discard)
 
 
+def _make_broadcast(run_id: str):
+    def broadcast(stage: str, data: dict | None = None) -> None:
+        _last_stage[run_id] = stage
+        bus.publish(run_id, stage, data)
+    return broadcast
+
+
 class BriefIn(BaseModel):
     text: str
 
@@ -52,11 +65,8 @@ class ApproveIn(BaseModel):
 async def post_brief(body: BriefIn):
     """Starts the pipeline in the background and returns immediately."""
     run_id = store.start_run(body.text)
-
-    def broadcast(stage: str, data: dict | None = None) -> None:
-        bus.publish(run_id, stage, data)
-
-    _spawn(asyncio.to_thread(run_pipeline, run_id, body.text, broadcast))
+    _last_stage[run_id] = "queued"
+    _spawn(asyncio.to_thread(run_pipeline, run_id, body.text, _make_broadcast(run_id)))
     return {"run_id": run_id}
 
 
@@ -65,6 +75,14 @@ async def get_run(run_id: str):
     row = store.get_run(run_id)
     if row is None:
         raise HTTPException(status_code=404, detail="run not found")
+    # SQLite is the source of truth for every field here; `stage` is a
+    # process-local hint layered on top so a field that's still null (e.g.
+    # parsed_rules before the LLM call returns) doesn't read as "found
+    # nothing" when it actually means "hasn't gotten there yet". Lost on
+    # restart, same as the WebSocket feed - status/parsed_rules/decisions
+    # stay correct from SQLite regardless.
+    row["stage"] = _last_stage.get(run_id, row["status"])
+    row["pipeline_complete"] = row["status"] in ("completed", "failed")
     return row
 
 
@@ -91,10 +109,8 @@ async def approve_run(run_id: str, body: ApproveIn):
         raise HTTPException(status_code=400,
                             detail=f"chosen_option must be one of {valid_keys}")
 
-    def broadcast(stage: str, data: dict | None = None) -> None:
-        bus.publish(run_id, stage, data)
-
-    _spawn(asyncio.to_thread(resume_pipeline, run_id, body.chosen_option, broadcast))
+    _last_stage[run_id] = "resuming"
+    _spawn(asyncio.to_thread(resume_pipeline, run_id, body.chosen_option, _make_broadcast(run_id)))
     return {"run_id": run_id, "status": "resuming"}
 
 
