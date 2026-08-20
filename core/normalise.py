@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import re
+import unicodedata
 from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
 
@@ -24,8 +25,20 @@ HDD_WORDS = ("hdd", "hard disk", "hard drive", "sata hdd", "5400rpm", "7200rpm")
 
 MONTHS = {m: i for i, m in enumerate(
     ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"], 1)}
-WEEKDAYS = {d: i for i, d in enumerate(
-    ["mon", "tue", "wed", "thu", "fri", "sat", "sun"])}
+
+# Full names and common abbreviations only, each an exact token - not "mon" as a
+# prefix, which would also match "month", "monitor", "money" and the like.
+_WEEKDAY_INDEX = {
+    "monday": 0, "mon": 0,
+    "tuesday": 1, "tue": 1, "tues": 1,
+    "wednesday": 2, "wed": 2,
+    "thursday": 3, "thu": 3, "thur": 3, "thurs": 3,
+    "friday": 4, "fri": 4,
+    "saturday": 5, "sat": 5,
+    "sunday": 6, "sun": 6,
+}
+_WEEKDAY_RE = re.compile(
+    r"\b(" + "|".join(sorted(_WEEKDAY_INDEX, key=len, reverse=True)) + r")\b", re.I)
 
 
 @dataclass
@@ -198,6 +211,13 @@ def parse_delivery_days(text: str | None, today: date | None = None) -> int | No
 
     low = s.lower()
 
+    # "FREE delivery Sat, 22 Aug Or fastest delivery Tomorrow, 21 Aug" - the
+    # fastest option is usually paid or Prime-only. Quote the standard promise;
+    # promising tomorrow and delivering Saturday is how a deadline gets missed.
+    m = re.search(r"\bor\s+(?:get\s+it\s+)?fastest\b", low)
+    if m:
+        low = low[:m.start()]
+
     # 0 is reserved for "no data", which is None, so same-day counts as 1.
     if any(w in low for w in ("today", "same day", "same-day", "tonight", "few hours")):
         return 1
@@ -222,10 +242,11 @@ def parse_delivery_days(text: str | None, today: date | None = None) -> int | No
             return None
         return days or 1
 
-    for name, idx in WEEKDAYS.items():
-        if re.search(rf"\b{name}[a-z]*\b", low):
-            delta = (idx - today.weekday()) % 7
-            return delta or 7  # "Monday" on a Monday means next Monday
+    m = _WEEKDAY_RE.search(low)
+    if m:
+        idx = _WEEKDAY_INDEX[m.group(1).lower()]
+        delta = (idx - today.weekday()) % 7
+        return delta or 7  # "Monday" on a Monday means next Monday
 
     STATS.miss("delivery", text)
     return None
@@ -316,7 +337,10 @@ _NOISE = re.compile(
 
 def normalise_title(text: str | None) -> str:
     """Strip specs and marketing so two titles for one laptop look alike."""
-    s = _text(text).lower()
+    # Sellers write brand names in maths-bold to dodge filters ("Lenovo" as
+    # U+1D5DF...). NFKC folds those back to ASCII; without it the brand is
+    # stripped as punctuation and dedupe compares a laptop against nothing.
+    s = unicodedata.normalize("NFKC", _text(text)).lower()
     s = re.sub(r"\([^)]*\)|\[[^\]]*\]", " ", s)     # bracketed marketing
     s = re.sub(r"[₹$]|rs\.?\s*\d[\d,]*", " ", s)
     s = re.sub(r"\b\d{1,2}\.\d\b", " ", s)          # screen sizes: 15.6

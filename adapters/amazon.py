@@ -41,7 +41,35 @@ class AmazonAdapter(VendorAdapter):
     # --- fetching -----------------------------------------------------------
 
     def search(self, query: str, max_results: int = 30) -> list[Listing]:
-        """Never raises. An empty list means we got nothing usable."""
+        """Never raises. An empty list means we got nothing usable.
+
+        Amazon's own search results page holds ~16 listings, so one request
+        cannot reach max_results=30 on its own. Extra pages are each cached
+        under their own key (query + page), so a repeat call for the same
+        query still makes zero network calls.
+        """
+        listings: list[Listing] = []
+        page = 1
+        while len(listings) < max_results:
+            results, from_cache = self._search_page(query, page)
+            if results is None:
+                break  # a failed page stops pagination, keeps what we have
+            log.info("amazon %r page %d -> %d raw results (%s)", query, page,
+                     len(results), "cache" if from_cache else "live")
+
+            for raw in results:
+                listing = self._to_listing(raw)
+                if listing is not None:
+                    listings.append(listing)
+
+            if len(results) < 16 or page >= 3:  # short page or safety cap: no more results
+                break
+            page += 1
+
+        return listings[:max_results]
+
+    def _search_page(self, query: str, page: int) -> tuple[list[dict] | None, bool]:
+        cache_query = query if page == 1 else f"{query}::page{page}"
         try:
             payload, from_cache = cache.fetch_json(
                 ENDPOINT,
@@ -52,29 +80,21 @@ class AmazonAdapter(VendorAdapter):
                     "search_term": query,
                     "category_id": "computers",
                     "sort_by": "price_low_to_high",
+                    "page": page,
                 },
                 source=self.name,
-                query=query,
+                query=cache_query,
                 fresh=self.fresh,
             )
         except Exception as exc:
-            log.warning("amazon search failed for %r: %s", query, exc)
-            return []
+            log.warning("amazon search failed for %r page %d: %s", query, page, exc)
+            return None, False
 
         results = payload.get("search_results") or []
         if not isinstance(results, list):
             log.warning("unexpected search_results shape: %s", type(results).__name__)
-            return []
-
-        log.info("amazon %r -> %d raw results (%s)", query, len(results),
-                 "from cache" if from_cache else "live")
-
-        listings = []
-        for raw in results[:max_results]:
-            listing = self._to_listing(raw)
-            if listing is not None:
-                listings.append(listing)
-        return listings
+            return None, from_cache
+        return results, from_cache
 
     # --- mapping ------------------------------------------------------------
 
