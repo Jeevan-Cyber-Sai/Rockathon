@@ -13,6 +13,7 @@ import json
 import logging
 import os
 import re
+from datetime import datetime, timezone
 
 import requests
 from dotenv import load_dotenv
@@ -27,7 +28,7 @@ load_dotenv()
 
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "anthropic/claude-sonnet-5")
-REQUEST_TIMEOUT = 30
+REQUEST_TIMEOUT = 8
 
 CONFIDENCE_THRESHOLD = 0.7  # below this, a rule goes into needs_confirmation
 KNOWN_FIELDS = ("quantity", "ram_gb", "storage_gb", "price_per_unit", "delivery_days")
@@ -98,6 +99,12 @@ BENDABLE signals (elastic=true): "within", "ideally", "around", "~", "roughly", 
 When the phrasing gives no clear signal either way, set elastic=true and confidence \
 below 0.7.
 
+delivery_days must always be a plain integer number of days from today - never a day \
+name or date string. Convert weekday names, "tomorrow", relative phrases ("next month" \
+= 30, "next week" = 7) and explicit dates into a day count yourself using the current \
+date given below. Storage must be reported in GB using 1 TB = 1024 GB, matching how \
+listings elsewhere in this system are parsed - "1TB SSD" means storage_gb=1024, not 1000.
+
 Example brief: "10 laptops with at least 16GB RAM and 512GB SSD, maximum ₹45,000 per \
 unit, delivery within 7 days"
 Example output: {"quantity": {"value": 10, "op": ">=", "elastic": false, "confidence": \
@@ -107,7 +114,10 @@ Example output: {"quantity": {"value": 10, "op": ">=", "elastic": false, "confid
 "delivery_days": {"value": 7, "op": "<=", "elastic": true, "confidence": 0.8}}"""
 
 _STRICT_SUFFIX = ("\n\nYour previous reply was not valid JSON matching the schema above. "
-                   "Reply with the JSON object ONLY - no markdown fences, no commentary.")
+                   "Reply with the JSON object ONLY - no markdown fences, no commentary. "
+                   "If a rule has no explicit number stated in the brief, OMIT that key "
+                   "entirely - never fill in a placeholder value like 0 just to satisfy "
+                   "the schema.")
 
 
 def _extract_json_object(content: str) -> dict:
@@ -120,9 +130,14 @@ def _extract_json_object(content: str) -> dict:
     return json.loads(text[start:end + 1])
 
 
+def _dated_system_prompt() -> str:
+    now = datetime.now(timezone.utc)
+    return SYSTEM_PROMPT + f"\n\nToday's date is {now:%Y-%m-%d} ({now:%A})."
+
+
 def _call_openrouter(text: str, api_key: str, strict: bool = False) -> dict:
     """One request/response round trip. Raises on any failure - caller handles retry."""
-    system = SYSTEM_PROMPT + (_STRICT_SUFFIX if strict else "")
+    system = _dated_system_prompt() + (_STRICT_SUFFIX if strict else "")
     resp = requests.post(
         OPENROUTER_URL,
         headers={
@@ -147,11 +162,25 @@ def _call_openrouter(text: str, api_key: str, strict: bool = False) -> dict:
 
 
 def _rules_from_raw_dict(raw: dict) -> tuple[dict, dict]:
-    """Split a validated {name: Rule} mapping into (known_fields, other)."""
+    """Split a validated {name: Rule} mapping into (known_fields, other).
+
+    All five KNOWN_FIELDS are numeric by definition (a count, a size, a price,
+    a day count) - "other" is the only place a string value belongs. A model
+    that answers delivery_days with "friday" instead of computing the day
+    count gets rejected here so the caller retries rather than silently
+    handing the decision engine a string it cannot compare.
+    """
     known, other = {}, {}
     for name, value in raw.items():
         rule = Rule(**value)  # raises ValidationError on a malformed rule -> triggers retry
         if name in KNOWN_FIELDS:
+            if not isinstance(rule.value, (int, float)):
+                raise ValueError(f"{name} must be numeric, got {rule.value!r}")
+            if rule.value <= 0:
+                # A price/quantity/size/day-count of 0 is not a real constraint -
+                # it is a placeholder the model filled in rather than omitting
+                # a key the brief never actually gave a number for.
+                raise ValueError(f"{name} must be positive, got {rule.value!r}")
             known[name] = rule
         else:
             other[name] = rule
