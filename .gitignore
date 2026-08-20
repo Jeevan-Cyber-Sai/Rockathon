@@ -24,3 +24,11 @@ Thumbs.db
 # Logs
 *.log
 npm-debug.log*
+
+# Local ledger (SQLite + WAL sidecars) and cached API responses.
+# data/fixtures/ is deliberately NOT ignored - fixtures are committed.
+data/ledger.db*
+data/raw/
+*.db
+*.db-wal
+*.db-shm
