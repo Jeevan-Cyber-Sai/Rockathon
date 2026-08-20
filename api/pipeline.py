@@ -1,0 +1,214 @@
+"""Orchestrates one run: parse -> fetch -> dedupe -> filter -> score -> decide.
+
+Deliberately does NOT call engine.decide() - that function creates its own
+run_id internally, which would fight with the API's need to hand a run_id
+back to the caller before the pipeline has even started. Instead this module
+composes engine.py's already-public step functions against a run_id the API
+layer created up front, and publishes a WebSocket event after each stage.
+
+Every persisted fact goes through core/store.py exactly as engine.decide()
+would use it - store.py, engine.py and the adapters are untouched.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+from pathlib import Path
+from typing import Callable
+
+from core import store
+from core.adapter import build_all
+from core.dedupe import group_listings
+from core.engine import (
+    best_single_vendor,
+    compare_allocations,
+    filter_offers,
+    find_ways_out,
+    score_candidates,
+    solve,
+)
+from core.models import Listing
+from core.parser import ParsedBrief, Rule, parse_brief
+
+log = logging.getLogger("api.pipeline")
+
+FIXTURES_PATH = Path(__file__).resolve().parent.parent / "data" / "fixtures" / "laptops.json"
+
+Broadcast = Callable[[str, dict | None], None]
+
+
+def _build_query(rules: dict[str, Rule]) -> str:
+    """The only real adapter (Amazon) is laptop-shaped; build the kind of
+    query it expects from whatever specs the brief actually stated."""
+    parts = ["laptop"]
+    if "ram_gb" in rules:
+        parts.append(f"{int(rules['ram_gb'].value)}GB RAM")
+    if "storage_gb" in rules:
+        parts.append(f"{int(rules['storage_gb'].value)}GB SSD")
+    return " ".join(parts)
+
+
+def _load_fixtures(rules: dict[str, Rule]) -> list[Listing]:
+    if not FIXTURES_PATH.exists():
+        return []
+    raw = json.loads(FIXTURES_PATH.read_text(encoding="utf-8"))
+    listings = [Listing(**row) for row in raw]
+    ram, storage = rules.get("ram_gb"), rules.get("storage_gb")
+    if ram is not None:
+        listings = [l for l in listings if l.ram_gb == int(ram.value)] or listings
+    if storage is not None:
+        listings = [l for l in listings if l.storage_gb == int(storage.value)] or listings
+    return listings
+
+
+def fetch_listings(rules: dict[str, Rule]) -> list[Listing]:
+    """Live adapters if any are usable, fixtures otherwise - same fallback
+    scripts/fetch.py uses, reimplemented here since scripts/ isn't a package."""
+    query = _build_query(rules)
+    adapters = build_all()
+    if not adapters:
+        log.warning("no usable adapters - falling back to fixtures")
+        return _load_fixtures(rules)
+    listings: list[Listing] = []
+    for adapter in adapters:
+        listings.extend(adapter.search(query))
+    return listings
+
+
+def _rules_from_stored(parsed_rules: dict) -> dict[str, Rule]:
+    return {name: Rule(**value) for name, value in parsed_rules.items()}
+
+
+def _products_from_snapshot(snapshot_rows: list[dict]):
+    listings = [Listing(**row) for snap in snapshot_rows for row in snap["listings"]]
+    return group_listings(listings)
+
+
+def _solve_and_persist(run_id: str, rules: dict[str, Rule], products, broadcast: Broadcast) -> None:
+    """The shared tail end of both a fresh run and a resumed one: run the
+    solver, and either save a completed decision or open an approval."""
+    comparison = solve(rules, products)
+
+    if comparison is not None:
+        store.save_decision(
+            run_id, chosen=comparison.allocation, runner_up=comparison.runner_up,
+            why_rejected=comparison.why_rejected, counterfactual=comparison.counterfactual,
+            total_cost=comparison.total_cost, latest_delivery=comparison.latest_delivery,
+        )
+        store.complete_run(run_id)
+        broadcast("decided", {"mode": comparison.mode, "total_cost": comparison.total_cost})
+        broadcast("completed", {"total_cost": comparison.total_cost,
+                                 "latest_delivery": comparison.latest_delivery})
+        return
+
+    ways_out = find_ways_out(rules, products)
+
+    if not ways_out:
+        why_rejected = ("Every rigid rule was enforced and no single elastic rule, "
+                        "bent on its own, produced a feasible purchase.")
+        chosen = {"mode": "infeasible", "reason": why_rejected,
+                  "rules": {k: v.model_dump() for k, v in rules.items()}}
+        store.save_decision(run_id, chosen=chosen, why_rejected=why_rejected)
+        store.fail_run(run_id)
+        broadcast("failed", {"reason": why_rejected})
+        return
+
+    options = [
+        {"key": f"option_{i + 1}", "rule": w.rule, "original_value": w.original_value,
+         "bent_value": w.bent_value, "mode": w.comparison.mode,
+         "total_cost": w.comparison.total_cost, "description": w.describe()}
+        for i, w in enumerate(ways_out)
+    ]
+    approval_id = store.request_approval(
+        run_id,
+        question="No allocation meets every rule as stated. Choose which rule to relax:",
+        options=options,
+    )
+    broadcast("awaiting_approval", {"approval_id": approval_id, "options": options})
+
+
+def run_pipeline(run_id: str, brief_text: str, broadcast: Broadcast) -> None:
+    """Synchronous - the caller runs this in a worker thread."""
+    try:
+        brief: ParsedBrief = parse_brief(brief_text)
+        rules = brief.all_rules()
+        store.save_parsed_rules(run_id, {k: v.model_dump() for k, v in rules.items()})
+        broadcast("parsed", {"rules": {k: v.model_dump() for k, v in rules.items()},
+                              "needs_confirmation": brief.needs_confirmation})
+
+        listings = fetch_listings(rules)
+        store.save_listings(run_id, [l.model_dump(mode="json") for l in listings])
+        broadcast("fetched", {"count": len(listings)})
+
+        products = group_listings(listings)
+        candidates = filter_offers(rules, products, rigid_only=False)
+        broadcast("filtered", {"count": len(candidates)})
+
+        scored = score_candidates(candidates)
+        broadcast("scored", {"count": len(scored)})
+
+        _solve_and_persist(run_id, rules, products, broadcast)
+
+    except Exception as exc:
+        log.exception("pipeline failed for run %s", run_id)
+        try:
+            store.fail_run(run_id)
+        except Exception:
+            pass
+        broadcast("failed", {"reason": str(exc)})
+
+
+def resume_pipeline(run_id: str, chosen_key: str, broadcast: Broadcast) -> None:
+    """Synchronous - the caller runs this in a worker thread."""
+    try:
+        row = store.get_run(run_id)
+        if row is None:
+            raise ValueError(f"unknown run {run_id}")
+
+        pending = next((a for a in row["approvals"] if a["chosen_option"] is None), None)
+        if pending is None:
+            raise ValueError(f"run {run_id} has no pending approval")
+
+        options = pending["options"]
+        match = next((o for o in options if o["key"] == chosen_key), None)
+        if match is None:
+            raise ValueError(f"unknown option {chosen_key!r} - choices were "
+                             f"{[o['key'] for o in options]}")
+
+        store.record_approval(pending["id"], chosen_key)
+
+        rules = _rules_from_stored(row["parsed_rules"])
+        products = _products_from_snapshot(row["listings"])
+
+        comparison = solve(rules, products, overrides={match["rule"]: match["bent_value"]})
+        if comparison is None:
+            # The option was feasible when offered; a live catalog could in
+            # principle have changed by the time it's approved.
+            why_rejected = (f"The previously-offered relaxation of {match['rule']} to "
+                            f"{match['bent_value']} is no longer feasible.")
+            store.save_decision(run_id, chosen={"mode": "infeasible", "reason": why_rejected},
+                                why_rejected=why_rejected)
+            store.fail_run(run_id)
+            broadcast("failed", {"reason": why_rejected})
+            return
+
+        chosen = {**comparison.allocation, "bent_rule": match["rule"],
+                  "bent_from": match["original_value"], "bent_to": match["bent_value"]}
+        store.save_decision(
+            run_id, chosen=chosen, runner_up=comparison.runner_up,
+            why_rejected=comparison.why_rejected, counterfactual=comparison.counterfactual,
+            total_cost=comparison.total_cost, latest_delivery=comparison.latest_delivery,
+        )
+        store.complete_run(run_id)
+        broadcast("decided", {"mode": comparison.mode, "total_cost": comparison.total_cost})
+        broadcast("completed", {"total_cost": comparison.total_cost,
+                                 "latest_delivery": comparison.latest_delivery})
+
+    except Exception as exc:
+        log.exception("resume failed for run %s", run_id)
+        try:
+            store.fail_run(run_id)
+        except Exception:
+            pass
+        broadcast("failed", {"reason": str(exc)})
