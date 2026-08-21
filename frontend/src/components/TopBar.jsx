@@ -1,6 +1,7 @@
 import { motion } from "framer-motion";
 import { Link, useLocation } from "react-router-dom";
 import { spring } from "../lib/motion";
+import { useAuth } from "../lib/AuthContext";
 
 /**
  * Persistent across every route - lives outside AnimatePresence in App.jsx,
@@ -11,7 +12,16 @@ export default function TopBar() {
   // The landing and login pages ship their own header/logo, so this bar would
   // be a second one stacked on top of them.
   const { pathname } = useLocation();
+  const { user, signOut } = useAuth();
+
   if (pathname === "/" || pathname === "/login") return null;
+
+  const displayName =
+    user?.user_metadata?.full_name ||
+    user?.email?.split("@")[0] ||
+    "Guest";
+
+  const initialLetter = displayName.charAt(0).toUpperCase();
 
   return (
     <header
@@ -74,13 +84,41 @@ export default function TopBar() {
         </nav>
       </div>
 
-      <div className="flex items-center gap-2">
-        <motion.span
-          className="h-1.5 w-1.5 rounded-full bg-violet"
-          animate={{ opacity: [0.35, 1, 0.35] }}
-          transition={{ duration: 2.2, repeat: Infinity, ease: "easeInOut" }}
-        />
-        <span className="h-px w-10 bg-edge" />
+      <div className="flex items-center gap-4">
+        {user ? (
+          <div className="flex items-center gap-2.5">
+            <div className="flex items-center gap-2 rounded-full border border-edge bg-panel px-3 py-1 text-xs text-ink/80 shadow-sm">
+              <span className="grid h-5 w-5 place-items-center rounded-full bg-violet/20 text-[10px] font-bold text-violet">
+                {initialLetter}
+              </span>
+              <span className="font-medium max-w-[130px] truncate">{displayName}</span>
+            </div>
+            <button
+              type="button"
+              onClick={signOut}
+              title="Sign out"
+              className="rounded-lg border border-edge bg-panel px-2.5 py-1 text-xs text-ink/60 hover:border-rose-500/30 hover:text-rose-500 hover:bg-rose-500/5 transition-all"
+            >
+              Sign out
+            </button>
+          </div>
+        ) : (
+          <Link
+            to="/login"
+            className="rounded-lg bg-violet px-3.5 py-1.5 text-xs font-medium text-white shadow-sm hover:bg-violet-deep transition-all"
+          >
+            Log in
+          </Link>
+        )}
+
+        <div className="hidden sm:flex items-center gap-2 border-l border-edge pl-3">
+          <motion.span
+            className="h-1.5 w-1.5 rounded-full bg-violet"
+            animate={{ opacity: [0.35, 1, 0.35] }}
+            transition={{ duration: 2.2, repeat: Infinity, ease: "easeInOut" }}
+          />
+          <span className="h-px w-6 bg-edge" />
+        </div>
       </div>
     </header>
   );
