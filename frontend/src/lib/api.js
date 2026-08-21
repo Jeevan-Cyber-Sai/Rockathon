@@ -32,3 +32,14 @@ export function postBrief(text) {
 export function getRun(runId) {
   return request(`/runs/${runId}`);
 }
+
+export function listRuns(limit = 50) {
+  return request(`/runs?limit=${limit}`);
+}
+
+export function approveRun(runId, chosenOption) {
+  return request(`/runs/${runId}/approve`, {
+    method: "POST",
+    body: JSON.stringify({ chosen_option: chosenOption }),
+  });
+}

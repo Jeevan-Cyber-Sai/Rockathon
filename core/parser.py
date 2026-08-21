@@ -414,13 +414,21 @@ def _regex_storage(text: str) -> Rule | None:
     return Rule(value=value, op=">=", elastic=elastic, confidence=confidence)
 
 
+_DELIVERY_ANCHOR = re.compile(r"\d+\s*days?|\bdeliver\w*\b|\barriv\w*\b|\bship\w*\b|\bwithin\b", re.I)
+
+
 def _regex_delivery(text: str) -> Rule | None:
     value = parse_delivery_days(text)
     if value is None:
         return None
-    # Delivery has no single anchor token to search back from (it may have come
-    # from a weekday name or a date); judge elasticity from the whole brief.
-    elastic, confidence = _elasticity(text, 0, len(text), default_elastic=True)
+    # A whole-text elasticity scan picks up rigid/bendable words from OTHER
+    # clauses ("at least 16GB", "maximum Rs 45,000") and misattributes them to
+    # delivery. Anchor near an actual delivery-shaped token when one exists;
+    # only fall back to the whole brief when nothing local can be found (e.g.
+    # a bare weekday name with no "days"/"deliver"/"within" nearby).
+    m = _DELIVERY_ANCHOR.search(text)
+    start, end = (m.start(), m.end()) if m else (0, len(text))
+    elastic, confidence = _elasticity(text, start, end, default_elastic=True)
     return Rule(value=value, op="<=", elastic=elastic, confidence=confidence)
 
 

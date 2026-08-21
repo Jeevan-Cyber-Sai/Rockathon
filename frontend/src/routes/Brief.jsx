@@ -85,49 +85,59 @@ export default function Brief() {
         </div>
 
         <div className="w-full">
-          {/* layout + shake share this element: layoutId drives the
-              cross-route morph, animate={barControls} drives the shake.
-              Both are spring-only, never a tween. */}
-          <motion.form
-            layoutId="brief-bar"
-            animate={barControls}
-            transition={{ layout: morphSpring }}
-            onSubmit={handleSubmit}
-            className={
-              "w-full rounded-2xl bg-panel border px-6 py-5 flex items-center gap-4 " +
-              "shadow-xl shadow-black/20 " +
-              (error ? "border-rose-500/50" : "border-edge")
-            }
-          >
-            <input
-              autoFocus
-              value={text}
-              onChange={(e) => {
-                setText(e.target.value);
-                if (error) setError(null);
-              }}
-              placeholder={EXAMPLES[placeholderIndex]}
-              className="flex-1 bg-transparent text-base text-white placeholder:text-white/30
-                         outline-none font-body"
-            />
-            <button
-              type="submit"
-              disabled={!text.trim() || submitting}
-              className="shrink-0 w-24 rounded-full bg-shopyx py-2 text-sm font-semibold text-white
-                         disabled:opacity-40 transition-opacity duration-200
-                         flex items-center justify-center"
+          {/* Shake and layoutId are deliberately on two different elements.
+              Framer Motion's layout-projection system (from layoutId) and an
+              imperative x-offset animation (from animate={barControls})
+              fight over the same node's transform if combined directly - the
+              projected layout transform wins and the shake never visibly
+              moves. The outer div owns the shake; the inner form owns only
+              the cross-route morph, untouched by it. */}
+          <motion.div animate={barControls}>
+            <motion.form
+              layoutId="brief-bar"
+              transition={{ layout: morphSpring }}
+              onSubmit={handleSubmit}
+              className={
+                "w-full rounded-2xl bg-panel border px-6 py-5 flex items-center gap-4 " +
+                "shadow-xl shadow-black/20 transition-shadow duration-150 " +
+                // The input's own outline is suppressed below - a square
+                // ring on a child inside this rounded pill would look like a
+                // bug, not a focus state. focus-within moves the visible
+                // indicator to the pill itself instead of removing it.
+                "focus-within:ring-2 focus-within:ring-violet/50 " +
+                (error ? "border-rose-500/50" : "border-edge")
+              }
             >
-              {submitting ? (
-                <motion.span
-                  className="h-3.5 w-3.5 rounded-full border-2 border-white/40 border-t-white"
-                  animate={{ rotate: 360 }}
-                  transition={{ repeat: Infinity, duration: 0.7, ease: "linear" }}
-                />
-              ) : (
-                "Find it"
-              )}
-            </button>
-          </motion.form>
+              <input
+                autoFocus
+                value={text}
+                onChange={(e) => {
+                  setText(e.target.value);
+                  if (error) setError(null);
+                }}
+                placeholder={EXAMPLES[placeholderIndex]}
+                className="flex-1 bg-transparent text-base text-white placeholder:text-white/30
+                           outline-none font-body"
+              />
+              <button
+                type="submit"
+                disabled={!text.trim() || submitting}
+                className="shrink-0 w-24 rounded-full bg-shopyx py-2 text-sm font-semibold text-white
+                           disabled:opacity-40 transition-opacity duration-200
+                           flex items-center justify-center"
+              >
+                {submitting ? (
+                  <motion.span
+                    className="h-3.5 w-3.5 rounded-full border-2 border-white/40 border-t-white"
+                    animate={{ rotate: 360 }}
+                    transition={{ repeat: Infinity, duration: 0.7, ease: "linear" }}
+                  />
+                ) : (
+                  "Find it"
+                )}
+              </button>
+            </motion.form>
+          </motion.div>
 
           <AnimatePresence mode="wait">
             {error ? (

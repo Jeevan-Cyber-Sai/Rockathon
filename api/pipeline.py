@@ -21,6 +21,9 @@ from core import store
 from core.adapter import build_all
 from core.dedupe import group_listings
 from core.engine import (
+    DELIVERY_FIELD,
+    PRICE_FIELD,
+    SPEC_FIELDS,
     best_single_vendor,
     compare_allocations,
     filter_offers,
@@ -85,6 +88,53 @@ def _products_from_snapshot(snapshot_rows: list[dict]):
     return group_listings(listings)
 
 
+def _listing_card(l: Listing) -> dict:
+    """The shape a product card needs - a subset of the full Listing, same
+    field names, safe to send over the wire on every "fetched" broadcast."""
+    return {
+        "source": l.source, "product_id": l.product_id, "title": l.title, "url": l.url,
+        "image_url": l.image_url, "price": l.price, "ram_gb": l.ram_gb,
+        "storage_gb": l.storage_gb, "storage_type": l.storage_type,
+        "delivery_days": l.delivery_days, "rating": l.rating,
+        "rating_count": l.rating_count, "stock": l.stock,
+    }
+
+
+_OP_CMP = {
+    ">=": lambda a, t: a >= t, "~": lambda a, t: a >= t, "<=": lambda a, t: a <= t,
+    "==": lambda a, t: a == t, ">": lambda a, t: a > t, "<": lambda a, t: a < t,
+}
+# Which rule to blame when more than one fails - price and delivery are what
+# a buyer actually notices first; spec gaps are usually smaller misses.
+_REASON_FIELDS = (PRICE_FIELD, DELIVERY_FIELD) + SPEC_FIELDS
+_REASON_TEXT = {
+    PRICE_FIELD: "over budget", DELIVERY_FIELD: "delivery too slow",
+    "ram_gb": "not enough RAM", "storage_gb": "not enough storage",
+}
+
+
+def _offer_field(offer: Listing, group, field: str):
+    if field in ("ram_gb", "storage_gb"):
+        own = getattr(offer, field)
+        return own if own is not None else getattr(group, field)
+    return offer.price if field == PRICE_FIELD else offer.delivery_days
+
+
+def _rejection_reason(rules: dict[str, Rule], offer: Listing, group) -> str:
+    """Best-effort explanation only - which candidates actually survive comes
+    from engine.filter_offers()/score_candidates(), never from this. If this
+    disagrees with that on some edge case, only the displayed reason text is
+    wrong, never who's shown as filtered out."""
+    for field in _REASON_FIELDS:
+        rule = rules.get(field)
+        if rule is None:
+            continue
+        actual = _offer_field(offer, group, field)
+        if actual is None or not _OP_CMP[rule.op](actual, rule.value):
+            return _REASON_TEXT[field]
+    return "didn't meet the brief"  # rules.get(...) missing entirely - rare, but not impossible
+
+
 def _solve_and_persist(run_id: str, rules: dict[str, Rule], products, broadcast: Broadcast) -> None:
     """The shared tail end of both a fresh run and a resumed one: run the
     solver, and either save a completed decision or open an approval."""
@@ -139,14 +189,25 @@ def run_pipeline(run_id: str, brief_text: str, broadcast: Broadcast) -> None:
 
         listings = fetch_listings(rules)
         store.save_listings(run_id, [l.model_dump(mode="json") for l in listings])
-        broadcast("fetched", {"count": len(listings)})
+        broadcast("fetched", {"count": len(listings), "listings": [_listing_card(l) for l in listings]})
 
         products = group_listings(listings)
         candidates = filter_offers(rules, products, rigid_only=False)
-        broadcast("filtered", {"count": len(candidates)})
+        survived = {(c.offer.source, c.offer.product_id) for c in candidates}
+        rejected = [
+            {"source": o.source, "product_id": o.product_id,
+             "reason": _rejection_reason(rules, o, g)}
+            for g in products for o in g.offers
+            if (o.source, o.product_id) not in survived
+        ]
+        broadcast("filtered", {"count": len(candidates), "rejected": rejected})
 
         scored = score_candidates(candidates)
-        broadcast("scored", {"count": len(scored)})
+        broadcast("scored", {
+            "count": len(scored),
+            "order": [{"source": sc.offer.source, "product_id": sc.offer.product_id,
+                       "score": sc.score} for sc in scored],
+        })
 
         _solve_and_persist(run_id, rules, products, broadcast)
 
