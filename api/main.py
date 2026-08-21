@@ -13,6 +13,7 @@ import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from api.events import bus
@@ -38,6 +39,15 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Procurement Agent API", lifespan=lifespan)
+
+# Vite dev server origin only - this API has no auth yet, so it isn't
+# opened up wider than the one frontend that's actually calling it.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 def _spawn(coro) -> None:

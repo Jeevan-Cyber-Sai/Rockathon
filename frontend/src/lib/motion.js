@@ -22,6 +22,7 @@ export const pageVariants = {
 
 // Stagger container for content that reveals after the morph settles.
 export const staggerContainer = (delayChildren = 0.15) => ({
+  initial: {},   // no visual state of its own - purely orchestrates children
   animate: {
     transition: { staggerChildren: 0.06, delayChildren },
   },
