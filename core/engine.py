@@ -14,6 +14,7 @@ after a full-strength solve has already failed.
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass, field
 from typing import Literal
 
@@ -33,6 +34,14 @@ DELIVERY_FIELD = "delivery_days"                  # rule op "<=" against offer.d
 QUANTITY_FIELD = "quantity"                       # aggregate, not a per-offer filter
 OFFER_RULE_FIELDS = SPEC_FIELDS + (PRICE_FIELD, DELIVERY_FIELD)
 
+# Rule names never treated as a generic, title-matched requirement: the four
+# offer-level fields above (each has its own typed check), quantity (an
+# aggregate, not a per-offer property), and product_type (drives the search
+# query in api/pipeline.py - matching it against the title too would risk
+# rejecting real results over phrasing, e.g. "insulated bottle" vs "water
+# bottle").
+_NON_GENERIC_RULE_FIELDS = OFFER_RULE_FIELDS + (QUANTITY_FIELD, "product_type")
+
 
 @dataclass
 class Candidate:
@@ -40,6 +49,10 @@ class Candidate:
 
     offer: Listing
     group: ProductGroup
+    # Names of soft (elastic) generic requirements this offer's title did not
+    # confirm - filled in by filter_offers, read by score_candidates to lower
+    # confidence the same way a missing rating/delivery_days already does.
+    unknown_soft: tuple[str, ...] = field(default_factory=tuple)
 
     @property
     def ram_gb(self) -> int | None:
@@ -79,11 +92,137 @@ def _compare(op: str, actual, target) -> bool:
     raise ValueError(f"unknown op: {op}")
 
 
+def _normalise_phrase(s: str) -> str:
+    """Hyphens/underscores collapse to spaces and case folds, so "leak-proof"
+    in a rule matches "leak proof" in a title (and vice versa) - the same
+    kind of surface variation real sellers write, not a semantic difference."""
+    return re.sub(r"[-_]+", " ", s.strip().lower())
+
+
+# A match immediately preceded by one of these is the opposite of a match:
+# "Non WiFi Printer" literally contains "wifi", and a plain substring test
+# scored it as satisfying a WiFi requirement.
+_NEGATORS = ("non", "no", "not", "without", "excluding")
+
+
+def _requirement_phrase_found(offer: Listing, rule: Rule) -> bool:
+    """Generic, category-agnostic requirement check: is this rule's value (a
+    short phrase - "stainless steel", "leak proof", "bluetooth") asserted by
+    the offer's title? There is no per-attribute schema or unit parsing here
+    by design - a phrase not found means UNKNOWN, not "confirmed absent": a
+    seller's title can easily omit an attribute the product genuinely has.
+    Caller decides what unknown means for rigid vs. elastic.
+
+    A negated occurrence doesn't count, so a title has to actually claim the
+    attribute rather than merely mention the word.
+    """
+    if not str(rule.value).strip():
+        return False
+
+    # A separator inside one concept is written every which way ("Wi-Fi",
+    # "Wi Fi", "WiFi"), so each side is compared both with the separator as a
+    # space and with it removed entirely. Splitting only one way meant a
+    # "WiFi" requirement missed a "Wi-Fi" title.
+    for haystack in _separator_variants(offer.title):
+        for needle in _separator_variants(str(rule.value)):
+            if _found_unnegated(haystack, needle):
+                return True
+    return False
+
+
+def _separator_variants(s: str) -> tuple[str, str]:
+    """The same text with hyphens/underscores read as a space, and with them
+    closed up. Spaces themselves are never removed - the negator test relies
+    on word boundaries, and collapsing "non wifi" to "nonwifi" would hide the
+    "non" from it.
+    """
+    low = s.strip().lower()
+    return (re.sub(r"[-_]+", " ", low), re.sub(r"[-_]+", "", low))
+
+
+def _found_unnegated(haystack: str, needle: str) -> bool:
+    """`needle` appears in `haystack` at least once without a negator in
+    front of it."""
+    if not needle:
+        return False
+    start = haystack.find(needle)
+    while start != -1:
+        preceding = haystack[:start].split()
+        if not preceding or preceding[-1] not in _NEGATORS:
+            return True  # one un-negated mention is enough
+        start = haystack.find(needle, start + 1)
+    return False
+
+
+# A denylist, not a classifier: common words/phrases that mark a listing as
+# an accessory or spare part FOR a product rather than the product itself
+# (a printer's spare roller, a power bank's silicone case, both of which
+# otherwise pass every stated rule and can out-price the real thing). Kept
+# deliberately small and literal - this is a cheap sanity filter, not
+# attribute extraction.
+_ACCESSORY_SIGNAL_WORDS = (
+    "case", "cover", "pouch", "sleeve", "strap",
+    "relay", "roller", "gear",
+    "spare part", "replacement part",
+)
+
+# "Compatible with X" is NOT an accessory signal on its own - plenty of real
+# products list what they work with ("10000mAh Power Bank | Compatible with
+# iPhone"). It only indicates an accessory when the thing being sold is not
+# itself the product, which the position test below distinguishes.
+_COMPATIBILITY_PHRASES = ("compatible with", "compatible for", "for use in")
+
+
+def _looks_like_accessory(offer: Listing, product_type: Rule | None) -> bool:
+    """True if the title reads as an accessory/part FOR the product rather
+    than the product itself.
+
+    Two independent signals:
+    1. A part/accessory noun anywhere in the title (case, roller, gear, ...).
+    2. A compatibility phrase that the product noun does NOT precede. Real
+       products name themselves first and list compatibility afterwards
+       ("... Power Bank | ... Compatible with ..."); accessories lead with
+       the part and name the host product later, if at all ("Ink Bottle
+       Compatible for Epson Printers"). Comparing the two positions
+       separates them without needing a per-category schema.
+    """
+    title = _normalise_phrase(offer.title)
+    if any(word in title for word in _ACCESSORY_SIGNAL_WORDS):
+        return True
+
+    pt = _normalise_phrase(str(product_type.value)) if product_type is not None else ""
+    if pt and f"for {pt}" in title:
+        return True
+
+    compat_positions = [title.find(p) for p in _COMPATIBILITY_PHRASES if p in title]
+    if compat_positions:
+        # The head noun, not the whole phrase: a title says "power bank",
+        # rarely the full "20000mAh usb-c power bank" the brief described.
+        head_noun = pt.split()[-1] if pt else ""
+        noun_at = title.find(head_noun) if head_noun else -1
+        if noun_at == -1 or noun_at > min(compat_positions):
+            return True
+    return False
+
+
+def generic_requirements(rules: dict[str, Rule]) -> dict[str, Rule]:
+    """Everything in `rules` that isn't one of the typed offer fields, the
+    aggregate quantity field, or product_type - i.e. whatever the parser
+    extracted for a non-laptop brief (material, capacity, connectivity, ...).
+    Reused by both the filter step and score_candidates so both agree on
+    exactly which rules are "generic"."""
+    return {name: rule for name, rule in rules.items() if name not in _NON_GENERIC_RULE_FIELDS}
+
+
 def _offer_meets(candidate: Candidate, rules: dict[str, Rule], rigid_only: bool,
                   overrides: dict[str, float] | None = None) -> bool:
     """True if this offer satisfies every applicable rule (optionally with one
     rule's threshold swapped for a relaxed value, for the bending search)."""
     overrides = overrides or {}
+
+    if _looks_like_accessory(candidate.offer, rules.get("product_type")):
+        return False
+
     for name in OFFER_RULE_FIELDS:
         rule = rules.get(name)
         if rule is None:
@@ -98,6 +237,14 @@ def _offer_meets(candidate: Candidate, rules: dict[str, Rule], rigid_only: bool,
         target = overrides.get(name, rule.value)
         if not _compare(rule.op, actual, target):
             return False
+
+    for name, rule in generic_requirements(rules).items():
+        if rigid_only and rule.elastic:
+            continue
+        if not _requirement_phrase_found(candidate.offer, rule) and not rule.elastic:
+            # Same "unknown is not compliant" policy as a rigid offer-level
+            # field above - just via a title search instead of a typed value.
+            return False
     return True
 
 
@@ -111,8 +258,13 @@ def filter_offers(rules: dict[str, Rule], products: list[ProductGroup], *,
     for group in products:
         for offer in group.offers:
             candidate = Candidate(offer=offer, group=group)
-            if _offer_meets(candidate, rules, rigid_only=rigid_only, overrides=overrides):
-                out.append(candidate)
+            if not _offer_meets(candidate, rules, rigid_only=rigid_only, overrides=overrides):
+                continue
+            candidate.unknown_soft = tuple(
+                name for name, rule in generic_requirements(rules).items()
+                if rule.elastic and not _requirement_phrase_found(offer, rule)
+            )
+            out.append(candidate)
     return out
 
 
@@ -173,6 +325,13 @@ def score_candidates(candidates: list[Candidate]) -> list[ScoredCandidate]:
         if c.offer.rating is None:
             missing.append("rating")
             confidence -= 0.10
+        for name in c.unknown_soft:
+            # A soft (elastic) generic requirement whose phrase the title
+            # never confirmed - same treatment as a missing rating: not
+            # disqualifying, just less certain. Same per-item weight as
+            # rating, since it's the same kind of "seller didn't say" gap.
+            missing.append(name)
+            confidence -= 0.10
 
         price_score = _minmax(prices, c.offer.price, higher_is_better=False)
         delivery_score = _minmax(all_delivery, delivery_val, higher_is_better=False)
@@ -195,6 +354,48 @@ def _quantity_target(rules: dict[str, Rule]) -> int:
     return int(rule.value) if rule is not None else 1
 
 
+def _allocation_line(offer: Listing, qty: int) -> dict:
+    """One purchasable line, as persisted in the decision record.
+
+    Carries `url` so the decision can actually be acted on - a recommendation
+    you can't click through to is a dead end - plus the rating/image the UI
+    needs to present it without re-joining against the listings snapshot.
+    """
+    return {
+        "source": offer.source,
+        "product_id": offer.product_id,
+        "title": offer.title,
+        "url": offer.url,
+        "image_url": offer.image_url,
+        "unit_price": offer.price,
+        "qty": qty,
+        "delivery_days": offer.delivery_days,
+        "rating": offer.rating,
+        "rating_count": offer.rating_count,
+        # True when the retailer listed no unit count, so the quantity is
+        # assumed rather than vendor-confirmed. Surfaced so a purchase order
+        # built from this never silently overstates what was verified.
+        "quantity_assumed": offer.stock is None,
+    }
+
+
+def _why_cheapest(offer: Listing, considered: int, next_cheapest: int | None) -> str:
+    """Plain-English reason this offer won, in terms of the pool it beat.
+
+    Deliberately only claims what the engine actually compared: price among
+    offers that already satisfy every rule. It does not imply the product is
+    better in any way the engine never measured.
+    """
+    if considered <= 1:
+        return f"The only {offer.source} offer that met every rule."
+    if next_cheapest is not None and next_cheapest > offer.price:
+        saving = next_cheapest - offer.price
+        return (f"Cheapest of {considered} offers that met every rule - "
+                f"{_rupees(saving)} below the next cheapest "
+                f"({_rupees(next_cheapest)}).")
+    return f"Cheapest of {considered} offers that met every rule."
+
+
 @dataclass
 class SingleVendorResult:
     candidate: Candidate
@@ -202,33 +403,57 @@ class SingleVendorResult:
     total_cost: int
     latest_delivery: int | None
 
+    # How many other offers cleared every rule, and what the next cheapest of
+    # them cost - the evidence behind "why this one". Defaulted so an
+    # allocation built without them still works.
+    considered: int = 0
+    next_cheapest: int | None = None
+
     def to_allocation(self) -> dict:
         return {
             "mode": "single_vendor",
-            "lines": [{
-                "source": self.candidate.offer.source,
-                "product_id": self.candidate.offer.product_id,
-                "title": self.candidate.offer.title,
-                "unit_price": self.candidate.offer.price,
-                "qty": self.quantity,
-                "delivery_days": self.candidate.offer.delivery_days,
-            }],
+            "lines": [_allocation_line(self.candidate.offer, self.quantity)],
             "total_cost": self.total_cost,
             "latest_delivery": self.latest_delivery,
+            "considered": self.considered,
+            "why_this_pick": _why_cheapest(
+                self.candidate.offer, self.considered, self.next_cheapest
+            ),
         }
 
 
+def _units_available(offer: Listing, qty_target: int) -> int:
+    """How many units this offer can supply.
+
+    `stock is None` does NOT mean "we don't know if it's purchasable" - the
+    adapters only ever set it from an explicit signal: 0 when the listing
+    says out-of-stock/unavailable, N when it says "only N left", and None
+    for an ordinary in-stock listing that simply doesn't publish a count.
+    Treating None as unbuyable therefore excluded virtually every real
+    listing and made almost every brief come back infeasible.
+
+    So None means "in stock, count not stated" and is assumed able to cover
+    the target. 0 still means out of stock and supplies nothing.
+    """
+    if offer.stock is None:
+        return qty_target
+    return offer.stock
+
+
 def best_single_vendor(rules: dict[str, Rule], candidates: list[Candidate]) -> SingleVendorResult | None:
-    """Cheapest offer with known, sufficient stock that meets every rule
-    (rigid and elastic - see module docstring). Unknown stock is excluded: a
-    "best single vendor" recommendation should be ready to execute, and we
-    cannot promise fulfilment on a quantity we cannot confirm is in stock."""
+    """Cheapest offer that meets every rule (rigid and elastic - see module
+    docstring) and can cover the quantity. An explicitly out-of-stock offer
+    is excluded; one that just doesn't publish a count is not - see
+    _units_available."""
     qty = _quantity_target(rules)
-    eligible = [c for c in candidates if c.offer.stock is not None and c.offer.stock >= qty]
+    eligible = [c for c in candidates if _units_available(c.offer, qty) >= qty]
     if not eligible:
         return None
-    best = min(eligible, key=lambda c: c.offer.price)
+    by_price = sorted(eligible, key=lambda c: c.offer.price)
+    best = by_price[0]
+    runner_up_price = by_price[1].offer.price if len(by_price) > 1 else None
     return SingleVendorResult(candidate=best, quantity=qty, total_cost=best.offer.price * qty,
+                               considered=len(eligible), next_cheapest=runner_up_price,
                                latest_delivery=best.offer.delivery_days)
 
 
@@ -241,28 +466,34 @@ class SplitResult:
     total_cost: int
     latest_delivery: int | None
 
+    considered: int = 0
+
     def to_allocation(self) -> dict:
+        cheapest_unit = min((c.offer.price for c, _ in self.lines), default=None)
         return {
             "mode": "split_order",
-            "lines": [{
-                "source": c.offer.source,
-                "product_id": c.offer.product_id,
-                "title": c.offer.title,
-                "unit_price": c.offer.price,
-                "qty": qty,
-                "delivery_days": c.offer.delivery_days,
-            } for c, qty in self.lines],
+            "lines": [_allocation_line(c.offer, qty) for c, qty in self.lines],
             "total_cost": self.total_cost,
             "latest_delivery": self.latest_delivery,
+            "considered": self.considered,
+            "why_this_pick": (
+                f"No single vendor had {sum(q for _, q in self.lines)} units in "
+                f"confirmed stock, so the order is split across "
+                f"{len(self.lines)} vendors - the cheapest combination that "
+                f"covers the full quantity"
+                + (f", from {_rupees(cheapest_unit)} per unit." if cheapest_unit
+                   else ".")
+            ),
         }
 
 
 def split_order(rules: dict[str, Rule], candidates: list[Candidate],
                  max_vendors: int = MAX_VENDORS) -> SplitResult | None:
     """Cheapest way to cover the target quantity across up to max_vendors
-    offers, respecting each one's own stock. Same known-stock-only policy as
-    best_single_vendor: an offer we cannot confirm has stock cannot be
-    promised a specific quantity in a concrete purchase order.
+    offers, respecting each one's own stock. Same availability policy as
+    best_single_vendor (see _units_available): an explicitly out-of-stock
+    offer supplies nothing, one that simply doesn't publish a count is
+    assumed able to cover the order.
 
     Total-budget and latest-delivery requirements are not separate solver
     constraints - every candidate already individually satisfies the price
@@ -272,14 +503,14 @@ def split_order(rules: dict[str, Rule], candidates: list[Candidate],
     minimize spend.
     """
     qty_target = _quantity_target(rules)
-    pool = [c for c in candidates if c.offer.stock is not None and c.offer.stock > 0]
+    pool = [c for c in candidates if _units_available(c.offer, qty_target) > 0]
     if not pool:
         return None
 
     model = cp_model.CpModel()
     qty_vars, use_vars = [], []
     for i, c in enumerate(pool):
-        cap = min(c.offer.stock, qty_target)
+        cap = min(_units_available(c.offer, qty_target), qty_target)
         q = model.NewIntVar(0, cap, f"qty_{i}")
         u = model.NewBoolVar(f"use_{i}")
         model.Add(q <= cap * u)
@@ -309,7 +540,8 @@ def split_order(rules: dict[str, Rule], candidates: list[Candidate],
     lines = [(c, solver.Value(q)) for c, q in zip(pool, qty_vars) if solver.Value(q) > 0]
     delivered = [c.offer.delivery_days for c, _ in lines if c.offer.delivery_days is not None]
     return SplitResult(lines=lines, total_cost=solver.Value(total_cost),
-                        latest_delivery=max(delivered) if delivered else None)
+                        latest_delivery=max(delivered) if delivered else None,
+                        considered=len(pool))
 
 
 # --- step 5: compare --------------------------------------------------------
@@ -385,11 +617,24 @@ def compare_allocations(single: SingleVendorResult | None,
                        single.latest_delivery, split.to_allocation(), why, counterfactual)
 
 
-def solve(rules: dict[str, Rule], products: list[ProductGroup],
-          overrides: dict[str, float] | None = None) -> Comparison | None:
-    """Full-strength solve (filter -> single -> split -> compare) for one set
-    of rule thresholds, optionally with one rule's value swapped out."""
-    candidates = filter_offers(rules, products, rigid_only=False, overrides=overrides)
+def _best_matching_tier(candidates: list[Candidate]) -> list[Candidate]:
+    """The candidates that confirm the most of the brief's soft attributes.
+
+    Soft (elastic) requirements never reject an offer, so without this the
+    choice came down to price alone and a cheaper listing that contradicts
+    the brief would beat one that matches it - a "WiFi printer" brief could
+    be answered with a printer whose own title says "Non WiFi". Selecting
+    the best-matching tier first makes a stated attribute count for
+    something, while price still decides within the tier.
+    """
+    if not candidates:
+        return candidates
+    fewest_unmatched = min(len(c.unknown_soft) for c in candidates)
+    return [c for c in candidates if len(c.unknown_soft) == fewest_unmatched]
+
+
+def _solve_pool(rules: dict[str, Rule], candidates: list[Candidate],
+                 overrides: dict[str, float] | None) -> Comparison | None:
     single = best_single_vendor(rules, candidates)
     if overrides and QUANTITY_FIELD in overrides:
         single = _resize_single(single, int(overrides[QUANTITY_FIELD])) if single else None
@@ -397,8 +642,26 @@ def solve(rules: dict[str, Rule], products: list[ProductGroup],
     return compare_allocations(single, split)
 
 
+def solve(rules: dict[str, Rule], products: list[ProductGroup],
+          overrides: dict[str, float] | None = None) -> Comparison | None:
+    """Full-strength solve (filter -> single -> split -> compare) for one set
+    of rule thresholds, optionally with one rule's value swapped out."""
+    candidates = filter_offers(rules, products, rigid_only=False, overrides=overrides)
+
+    # Try the offers that best match the stated soft attributes first. If
+    # that narrower pool can't cover the order (too few units, too few
+    # vendors), fall back to the full pool rather than failing outright -
+    # a soft requirement must never be the reason nothing can be bought.
+    preferred = _best_matching_tier(candidates)
+    if len(preferred) < len(candidates):
+        result = _solve_pool(rules, preferred, overrides)
+        if result is not None:
+            return result
+    return _solve_pool(rules, candidates, overrides)
+
+
 def _resize_single(result: SingleVendorResult, qty: int) -> SingleVendorResult | None:
-    if result.candidate.offer.stock is None or result.candidate.offer.stock < qty:
+    if _units_available(result.candidate.offer, qty) < qty:
         return None
     return SingleVendorResult(candidate=result.candidate, quantity=qty,
                                total_cost=result.candidate.offer.price * qty,

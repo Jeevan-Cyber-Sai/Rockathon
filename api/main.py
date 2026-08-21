@@ -41,10 +41,15 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Procurement Agent API", lifespan=lifespan)
 
 # Vite dev server origin only - this API has no auth yet, so it isn't
-# opened up wider than the one frontend that's actually calling it.
+# opened up wider than the one frontend that's actually calling it. Vite
+# falls onto 5174+ when 5173 is already taken, so both are allowed rather
+# than hardcoding the one port it happened to start on last.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_origins=[
+        "http://localhost:5173", "http://127.0.0.1:5173",
+        "http://localhost:5174", "http://127.0.0.1:5174",
+    ],
     allow_methods=["*"],
     allow_headers=["*"],
 )

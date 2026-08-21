@@ -78,7 +78,11 @@ class AmazonAdapter(VendorAdapter):
                     "type": "search",
                     "amazon_domain": self.domain,
                     "search_term": query,
-                    "category_id": "computers",
+                    # No category_id: this adapter now searches every product
+                    # category, not just computers. The search_term itself
+                    # (built from product_type) carries enough specificity for
+                    # Amazon's own relevance ranking to surface the right
+                    # results, laptops included.
                     "sort_by": "price_low_to_high",
                     "page": page,
                 },

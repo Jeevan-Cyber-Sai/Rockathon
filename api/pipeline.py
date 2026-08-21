@@ -28,6 +28,7 @@ from core.engine import (
     compare_allocations,
     filter_offers,
     find_ways_out,
+    generic_requirements,
     score_candidates,
     solve,
 )
@@ -41,15 +42,71 @@ FIXTURES_PATH = Path(__file__).resolve().parent.parent / "data" / "fixtures" / "
 Broadcast = Callable[[str, dict | None], None]
 
 
+# Attributes worth putting IN the search box, in the order a person would
+# type them. Brand first: it's by far the strongest relevance signal Amazon
+# has, and a brand-less query for "charger" returns unbranded filler that
+# then fails the brand rule at the filter step - the search and the filter
+# end up asking for different things.
+_QUERY_LEADING_ATTRS = ("brand", "make", "manufacturer")
+# Cap on how many other stated attributes get appended. Amazon's relevance
+# degrades fast on long queries - past a few terms it starts returning
+# loosely-related filler or nothing at all, so the extra specificity costs
+# more than it buys.
+_MAX_EXTRA_QUERY_ATTRS = 2
+
+
+def _query_terms_from_requirements(rules: dict[str, Rule]) -> tuple[list[str], list[str]]:
+    """(leading, extra) short text attributes to fold into the search query.
+
+    Only the generic text requirements the parser extracted - never the
+    numeric/typed fields, which have their own handling below.
+    """
+    leading, extra = [], []
+    for name, rule in generic_requirements(rules).items():
+        value = str(rule.value).strip()
+        # Long values are prose, not search terms; they'd blow up the query.
+        if not value or len(value.split()) > 3:
+            continue
+        (leading if name in _QUERY_LEADING_ATTRS else extra).append(value)
+    return leading, extra
+
+
 def _build_query(rules: dict[str, Rule]) -> str:
-    """The only real adapter (Amazon) is laptop-shaped; build the kind of
-    query it expects from whatever specs the brief actually stated."""
-    parts = ["laptop"]
+    """Build the retailer search string from the brief's own words.
+
+    product_type names the thing; brand (when stated) leads, since that's
+    what actually steers Amazon's relevance; a couple of other stated
+    attributes follow; ram/storage keep their explicit spec formatting.
+    "laptop" is only a fallback for the rare case product_type is absent
+    (e.g. the regex parser fallback, which doesn't always extract it).
+    """
+    product_type = rules.get("product_type")
+    leading, extra = _query_terms_from_requirements(rules)
+
+    parts = list(leading)
+    parts.append(str(product_type.value) if product_type is not None else "laptop")
+    parts.extend(extra[:_MAX_EXTRA_QUERY_ATTRS])
+
     if "ram_gb" in rules:
         parts.append(f"{int(rules['ram_gb'].value)}GB RAM")
     if "storage_gb" in rules:
         parts.append(f"{int(rules['storage_gb'].value)}GB SSD")
-    return " ".join(parts)
+
+    # Drop any term wholly contained in another ("samsung" once product_type
+    # is already "samsung charger"): repeats add no signal and long queries
+    # actively hurt relevance. Longest-first so the MORE specific term is the
+    # one kept, then the original ordering is restored.
+    kept: list[str] = []
+    for part in sorted(parts, key=lambda p: -len(p)):
+        if any(part.lower() in k.lower() for k in kept):
+            continue
+        kept.append(part)
+
+    ordered: list[str] = []
+    for part in parts:
+        if part in kept and part not in ordered:
+            ordered.append(part)
+    return " ".join(ordered)
 
 
 def _load_fixtures(rules: dict[str, Rule]) -> list[Listing]:

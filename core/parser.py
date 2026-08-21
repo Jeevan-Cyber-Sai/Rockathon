@@ -97,15 +97,29 @@ Each key is a snake_case rule name. Each value is an object of this exact shape:
 "elastic": true or false, "confidence": a number from 0.0 to 1.0}
 
 Use these standard names when they apply: quantity, ram_gb, storage_gb, price_per_unit, \
-delivery_days. If the brief is not about laptops (chairs, monitors, anything else), still \
-use quantity/price_per_unit/delivery_days where relevant, and invent a clear snake_case \
-name for any other attribute actually stated (e.g. product_type, color, material). Only \
-include a key the brief actually states or clearly implies - never invent an unstated \
-constraint.
+delivery_days.
+
+ALWAYS also include product_type: a short, plain-English product category (e.g. "laptop", \
+"water bottle", "office chair", "wireless keyboard") as a string value, op "==", elastic \
+false, confidence reflecting how clearly the brief names the category (usually high - the \
+product being bought is rarely ambiguous). This is used verbatim as an Amazon search term, \
+so keep it a short, natural noun phrase - not a full restatement of the brief.
+
+For any OTHER attribute the brief states that isn't one of the standard numeric fields \
+above (material, capacity, connectivity, a feature, a certification, a size, a color, \
+anything a listing's title would plausibly mention), invent a clear snake_case key and set \
+its value to a SHORT TEXT PHRASE - not a bare number - describing what a matching product \
+listing's title should contain. This text phrase is matched against real listing titles \
+verbatim, so phrase it the way a seller would actually write it: "stainless steel" not \
+"steel material", "1 litre" not just "1", "leak proof" not "leakproof=true", "bluetooth" \
+not "wireless connectivity type". Use op "==" for these (they mean "this phrase should \
+appear on a matching listing"). Only include a key the brief actually states or clearly \
+implies - never invent an unstated constraint.
 
 Elasticity: quantity and price/budget caps are almost always rigid (elastic=false) unless \
 the brief says otherwise ("budget flexible", "quantity approximate"). Delivery time and \
-soft specs are usually bendable (elastic=true) unless stated as a hard requirement.
+soft specs (including the text-phrase attributes above) are usually bendable (elastic=true) \
+unless stated as a hard requirement.
 RIGID signals (elastic=false, higher confidence): "maximum", "must", "no more than", \
 "exactly", "cap", "at most".
 BENDABLE signals (elastic=true): "within", "ideally", "around", "~", "roughly", \
@@ -121,11 +135,20 @@ listings elsewhere in this system are parsed - "1TB SSD" means storage_gb=1024, 
 
 Example brief: "10 laptops with at least 16GB RAM and 512GB SSD, maximum ₹45,000 per \
 unit, delivery within 7 days"
-Example output: {"quantity": {"value": 10, "op": ">=", "elastic": false, "confidence": \
+Example output: {"product_type": {"value": "laptop", "op": "==", "elastic": false, \
+"confidence": 0.95}, "quantity": {"value": 10, "op": ">=", "elastic": false, "confidence": \
 0.95}, "ram_gb": {"value": 16, "op": ">=", "elastic": false, "confidence": 0.9}, \
 "storage_gb": {"value": 512, "op": ">=", "elastic": false, "confidence": 0.9}, \
 "price_per_unit": {"value": 45000, "op": "<=", "elastic": false, "confidence": 0.95}, \
-"delivery_days": {"value": 7, "op": "<=", "elastic": true, "confidence": 0.8}}"""
+"delivery_days": {"value": 7, "op": "<=", "elastic": true, "confidence": 0.8}}
+
+Example brief: "20 stainless steel water bottles, 1 litre, leak proof, under 500"
+Example output: {"product_type": {"value": "water bottle", "op": "==", "elastic": false, \
+"confidence": 0.95}, "quantity": {"value": 20, "op": ">=", "elastic": false, "confidence": \
+0.9}, "price_per_unit": {"value": 500, "op": "<=", "elastic": false, "confidence": 0.9}, \
+"material": {"value": "stainless steel", "op": "==", "elastic": true, "confidence": 0.8}, \
+"capacity": {"value": "1 litre", "op": "==", "elastic": true, "confidence": 0.75}, \
+"leak_proof": {"value": "leak proof", "op": "==", "elastic": true, "confidence": 0.75}}"""
 
 _STRICT_SUFFIX = ("\n\nYour previous reply was not valid JSON matching the schema above. "
                    "Reply with the JSON object ONLY - no markdown fences, no commentary. "
@@ -308,9 +331,27 @@ _RIGID_WORDS = ("maximum", "must", "no more than", "exactly", "cap", "at most",
 _BENDABLE_WORDS = ("within", "ideally", "around", "~", "roughly", "approximately",
                     "flexible", "preferably", "or so")
 
+# Words that follow a number as a UNIT, never as the thing being bought -
+# "16 GB", "7 days", "1.5 litre". Without excluding these, any number in the
+# brief followed by a word would read as a quantity.
+_QTY_UNIT_WORDS = (
+    r"gb|tb|mb|kb|mah|mm|cm|ft|kg|kgs|ml|l|litre|litres|liter|liters|"
+    r"w|watt|watts|v|volt|volts|hz|ghz|mhz|inch|inches|"
+    r"day|days|hour|hours|min|mins|minute|minutes|week|weeks|month|months|"
+    r"year|years|rs|rupees|percent|pm|am"
+)
+
+# Any noun, not a fixed list: the old list was laptop-era
+# (laptops|chairs|desks|monitors|units|pieces|items), so "5 chargers" or
+# "5 power banks" parsed no quantity at all and silently fell back to 1 -
+# an order for one unit instead of five.
+#
+# The lookbehind stops a number that is part of a larger literal from being
+# read as a count: the "000" in "Rs 45,000 per unit" and the "5" in "1.5
+# litre" are both preceded by a comma/dot and are not quantities.
 _QTY_WITH_NOUN = re.compile(
-    r"(~|\bapprox(?:imately)?\s+|\baround\s+)?\b(\d{1,4})\s*(?:x\s*)?"
-    r"(laptops?|chairs?|desks?|monitors?|units?|pieces?|items?)\b", re.I)
+    r"(~|\bapprox(?:imately)?\s+|\baround\s+)?(?<![\d,.])\b(\d{1,4})\s*(?:x\s*)?"
+    r"\b(?!(?:" + _QTY_UNIT_WORDS + r")\b)([a-z]{3,})\b", re.I)
 _QTY_WITH_VERB = re.compile(r"\b(?:need|want|buy|get|order)\s+(~|about\s+)?(\d{1,4})\b", re.I)
 
 _RUPEE = re.compile(r"[₹]|\brs\.?\b", re.I)
@@ -360,6 +401,8 @@ def _regex_quantity(text: str) -> Rule | None:
     groups = m.groups()
     approx_marker = groups[0]
     value = int(next(g for g in groups[1:] if g and g.isdigit()))
+    if value < 1:
+        return None  # "0 of something" is a misread, not an order
 
     if approx_marker:
         return Rule(value=value, op="~", elastic=True, confidence=0.7)
@@ -432,6 +475,70 @@ def _regex_delivery(text: str) -> Rule | None:
     return Rule(value=value, op="<=", elastic=elastic, confidence=confidence)
 
 
+# --- product_type (regex fallback) ------------------------------------------
+
+_LEADING_NUMBER = re.compile(r"\b(\d{1,4})\b")
+# Words that can precede or interrupt the noun phrase without being part of
+# it - once one of these is hit after the phrase has started, the phrase is
+# over. "of"/"x" are allowed to precede without ending anything ("10 x
+# chairs", "a lot of monitors" never comes up here, but harmless either way).
+_PRODUCT_TYPE_STOPWORDS = {
+    "needed", "required", "with", "under", "for", "within", "at", "by",
+    "delivery", "budget", "cost", "price", "max", "maximum", "min",
+    "minimum", "and", "or", "the", "a", "an", "to", "on", "up", "no",
+    "more", "than", "each", "per", "unit", "units", "approx",
+    "approximately", "around", "about", "least", "most", "of", "x",
+    # Measurement units - a number+unit right after the product noun
+    # ("1.5 litre", "20000mAh") loses its digits when only letters are
+    # extracted, so without this the unit word gets mistaken for part of
+    # the noun phrase ("electric kettles litre" instead of "electric
+    # kettle").
+    "litre", "litres", "liter", "liters", "ml", "kg", "kgs", "gram",
+    "grams", "cm", "mm", "inch", "inches", "ft", "hour", "hours", "min",
+    "mins", "minutes", "watt", "watts", "mah", "gb", "tb",
+}
+
+
+def _singularize(word: str) -> str:
+    """Best-effort, not a lemmatizer: 'mats' -> 'mat', 'chairs' -> 'chair',
+    'leashes' -> 'leash' (the common -shes/-ches/-xes "-es" plural, not just
+    "-s"). Leaves short words and words already ending 'ss' alone rather
+    than risk a wrong strip ('glasses' -> 'glasse')."""
+    if len(word) > 4 and word.endswith(("shes", "ches", "xes")):
+        return word[:-2]
+    if len(word) > 3 and word.endswith("s") and not word.endswith("ss"):
+        return word[:-1]
+    return word
+
+
+def _regex_product_type(text: str) -> Rule | None:
+    """Best-effort product-name guess for when the LLM path is unavailable:
+    the first noun phrase right after the quantity number - "10 yoga mats
+    needed..." -> "yoga mat". Not meant to match the LLM's judgment (no
+    quantity anchor as sophisticated as _regex_quantity's noun list, since
+    the whole point here is a noun the fallback doesn't already know) - just
+    enough that _build_query() searches for something plausible instead of
+    silently defaulting to "laptop" whenever a brief isn't laptop-shaped."""
+    m = _LEADING_NUMBER.search(text)
+    if not m:
+        return None
+    words = re.findall(r"[a-zA-Z]+", text[m.end():])
+    phrase: list[str] = []
+    for w in words:
+        lw = w.lower()
+        if lw in _PRODUCT_TYPE_STOPWORDS:
+            if phrase:
+                break        # phrase already started - a stopword ends it
+            continue         # phrase hasn't started yet - skip filler and keep looking
+        phrase.append(lw)
+        if len(phrase) >= 3:
+            break
+    if not phrase:
+        return None
+    phrase[-1] = _singularize(phrase[-1])
+    return Rule(value=" ".join(phrase), op="==", elastic=False, confidence=0.5)
+
+
 def _parse_via_regex(text: str) -> ParsedBrief:
     fields = {
         "quantity": _regex_quantity(text),
@@ -441,7 +548,9 @@ def _parse_via_regex(text: str) -> ParsedBrief:
         "delivery_days": _regex_delivery(text),
     }
     known = {k: v for k, v in fields.items() if v is not None}
-    return ParsedBrief(raw_text=text, source="regex", **known)
+    product_type = _regex_product_type(text)
+    other = {"product_type": product_type} if product_type is not None else {}
+    return ParsedBrief(raw_text=text, source="regex", other=other, **known)
 
 
 # --- public entry point ----------------------------------------------------
