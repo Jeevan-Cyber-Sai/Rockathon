@@ -22,26 +22,26 @@ const STORES = [
 ];
 
 const SIGNALS = [
-  { label: "Price", note: "landed cost after coupons and shipping" },
-  { label: "Delivery time", note: "real ETA to your pincode" },
-  { label: "Seller rating", note: "the seller, not just the brand" },
-  { label: "Stock", note: "quantity fulfillable today" },
-  { label: "Review count", note: "volume weighted by quality" },
-  { label: "Returns", note: "window, pickup and refund friction" },
+  { label: "Price", note: "True cost after coupons" },
+  { label: "Delivery", note: "Real pincode ETA" },
+  { label: "Seller Score", note: "Verified merchant rating" },
+  { label: "Live Stock", note: "Instant inventory check" },
+  { label: "Reviews", note: "Quality-weighted sentiment" },
+  { label: "Returns", note: "Hassle-free policy check" },
 ];
 
 const STEPS = [
   {
-    t: "Write it like you'd say it",
-    d: "Quantity, specs, budget, deadline. No filters, no dropdowns, no tab-hopping.",
+    t: "Ask naturally",
+    d: "Type specs, budget, or bulk quantity in plain words.",
   },
   {
-    t: "We pull the live listings",
-    d: "Matching products from each marketplace, with seller, stock and delivery resolved to your address.",
+    t: "Live scan",
+    d: "We pull real-time pricing and stock across top stores.",
   },
   {
-    t: "One ranked answer",
-    d: "A single table showing where to buy, what it lands at, and what you trade off if you go cheaper.",
+    t: "Ranked results",
+    d: "Pick the best deal with zero hidden trade-offs.",
   },
 ];
 
@@ -84,7 +84,7 @@ export default function Landing() {
               How it works
             </a>
             <a className="story-link" href="#signals">
-              What we compare
+              Signals
             </a>
             <a className="story-link" href="#stores">
               Stores
@@ -98,25 +98,22 @@ export default function Landing() {
           </Link>
         </header>
 
-        <section className="relative mx-auto w-full max-w-6xl px-6 pt-14 pb-24 md:pt-24">
-          <p className="rise text-xs uppercase tracking-[0.38em] text-brand/80">
-            price intelligence for real buyers
+        <section className="relative mx-auto w-full max-w-6xl px-6 pt-12 pb-20 md:pt-20">
+          <p className="rise text-xs uppercase tracking-[0.35em] text-brand font-medium">
+            Smart Multi-Store Shopping
           </p>
 
-          <h1 className="rise mt-7 max-w-4xl text-5xl leading-[0.95] text-brand-ink md:text-7xl">
+          <h1 className="rise mt-6 max-w-4xl text-5xl leading-[1] text-brand-ink md:text-7xl">
             Say what you need.
             <br />
-            We&rsquo;ll find where it&rsquo;s
-            <span className="text-brand"> actually</span> worth buying.
+            Find the <span className="text-brand">best deal</span> instantly.
           </h1>
 
-          <p className="rise mt-7 max-w-xl text-lg leading-relaxed text-brand-ink/70">
-            Shopyx reads a request like &ldquo;10 HP laptops, 16GB RAM, under &#8377;65,000,
-            delivered by Friday&rdquo; and pulls every matching listing across the big
-            marketplaces — then ranks them on the things that decide a purchase.
+          <p className="rise mt-6 max-w-xl text-base md:text-lg leading-relaxed text-brand-ink/70">
+            Compare live prices, delivery times, and verified sellers across Amazon, Flipkart, Croma, and more — in one search.
           </p>
 
-          <div className="rise mt-10 flex flex-wrap items-center gap-4">
+          <div className="rise mt-8 flex flex-wrap items-center gap-4">
             <Link
               to="/login"
               className="rounded-xl bg-brand px-7 py-3.5 text-sm font-medium text-cream shadow-[var(--shadow-lift)] transition-transform hover:-translate-y-0.5"
@@ -131,24 +128,24 @@ export default function Landing() {
             </a>
           </div>
 
-          <div className="rise mt-8 flex flex-wrap items-center gap-x-6 gap-y-2 text-sm text-brand-ink/50">
-            <span>Bulk quantities supported</span>
+          <div className="rise mt-8 flex flex-wrap items-center gap-x-5 gap-y-2 text-xs md:text-sm text-brand-ink/55">
+            <span>⚡ Bulk quantities</span>
             <span className="h-1 w-1 rounded-full bg-brand/40" />
-            <span>Pincode-aware delivery estimates</span>
+            <span>🚚 Live pincode ETAs</span>
             <span className="h-1 w-1 rounded-full bg-brand/40" />
-            <span>No affiliate reordering</span>
+            <span>🛡️ Zero sponsored bias</span>
           </div>
         </section>
 
         <section id="stores" className="relative border-y border-hairline/70 bg-surface/40">
-          <div className="mx-auto flex w-full max-w-6xl flex-wrap items-center gap-x-8 gap-y-4 px-6 py-6">
-            <span className="text-xs uppercase tracking-[0.3em] text-brand-ink/35">
+          <div className="mx-auto flex w-full max-w-6xl flex-wrap items-center gap-x-8 gap-y-4 px-6 py-5">
+            <span className="text-xs uppercase tracking-[0.25em] text-brand-ink/40 font-medium">
               Sourced from
             </span>
             {STORES.map((s) => (
               <span
                 key={s.name}
-                className="flex items-center gap-2 text-sm tracking-wide text-brand-ink/55"
+                className="flex items-center gap-2 text-sm tracking-wide text-brand-ink/60"
               >
                 <img
                   src={`https://www.google.com/s2/favicons?domain=${s.domain}&sz=64`}
@@ -164,41 +161,41 @@ export default function Landing() {
           </div>
         </section>
 
-        <section id="signals" className="relative mx-auto w-full max-w-6xl px-6 py-16">
-          <h2 className="max-w-xl text-2xl text-brand-ink md:text-3xl">
-            Six signals we score on every listing, in every category.
+        <section id="signals" className="relative mx-auto w-full max-w-6xl px-6 py-14">
+          <h2 className="text-2xl text-brand-ink md:text-3xl">
+            Key Signals We Compare
           </h2>
-          <div className="mt-7 grid gap-px overflow-hidden rounded-xl border border-hairline bg-hairline/60 sm:grid-cols-2 lg:grid-cols-3">
+          <div className="mt-6 grid gap-px overflow-hidden rounded-xl border border-hairline bg-hairline/60 sm:grid-cols-2 lg:grid-cols-3">
             {SIGNALS.map((s, i) => (
               <div key={s.label} className="bg-surface/85 px-5 py-4">
-                <span className="text-[0.65rem] tabular-nums text-brand/60">
+                <span className="text-[0.65rem] tabular-nums text-brand/60 font-semibold">
                   {String(i + 1).padStart(2, "0")}
                 </span>
-                <h3 className="mt-1 text-base text-brand-ink">{s.label}</h3>
-                <p className="mt-1 text-xs leading-relaxed text-brand-ink/55">{s.note}</p>
+                <h3 className="mt-1 text-base font-medium text-brand-ink">{s.label}</h3>
+                <p className="mt-0.5 text-xs text-brand-ink/55">{s.note}</p>
               </div>
             ))}
           </div>
         </section>
 
-        <section id="how" className="relative mx-auto w-full max-w-6xl px-6 pb-28">
-          <div className="grid gap-14 md:grid-cols-3">
+        <section id="how" className="relative mx-auto w-full max-w-6xl px-6 pb-20">
+          <div className="grid gap-8 md:grid-cols-3">
             {STEPS.map((step, i) => (
-              <div key={step.t} className="border-t border-hairline pt-6">
-                <span className="text-xs tabular-nums tracking-[0.3em] text-brand/60">
-                  STEP {i + 1}
+              <div key={step.t} className="border-t border-hairline pt-5">
+                <span className="text-xs tabular-nums tracking-[0.25em] text-brand font-semibold">
+                  0{i + 1}
                 </span>
-                <h3 className="mt-4 text-2xl text-brand-ink">{step.t}</h3>
-                <p className="mt-3 text-sm leading-relaxed text-brand-ink/60">{step.d}</p>
+                <h3 className="mt-2 text-xl text-brand-ink">{step.t}</h3>
+                <p className="mt-1.5 text-sm text-brand-ink/60">{step.d}</p>
               </div>
             ))}
           </div>
         </section>
 
         <footer className="relative border-t border-hairline">
-          <div className="mx-auto flex w-full max-w-6xl flex-col items-start justify-between gap-4 px-6 py-8 text-sm text-brand-ink/45 sm:flex-row sm:items-center">
+          <div className="mx-auto flex w-full max-w-6xl items-center justify-between px-6 py-6 text-xs text-brand-ink/45">
             <span>Shopyx</span>
-            <span>Comparison results are ranked on merit, never on commission.</span>
+            <span>Ranked on merit & true cost.</span>
           </div>
         </footer>
       </motion.main>

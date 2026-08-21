@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion, useAnimation } from "framer-motion";
 import { useNavigate } from "react-router-dom";
 import { pageVariants, morphSpring, spring, staggerContainer, staggerItem } from "../lib/motion";
@@ -92,6 +92,102 @@ export default function Brief() {
   const navigate = useNavigate();
   const barControls = useAnimation();
 
+  // ── Speech-to-text ──
+  const [listening, setListening] = useState(false);
+  const recognitionRef = useRef(null);
+  const textBeforeSpeechRef = useRef("");
+
+  // Grab the SpeechRecognition constructor once
+  const SpeechRecognitionCtor = useMemo(
+    () =>
+      typeof window !== "undefined"
+        ? window.SpeechRecognition || window.webkitSpeechRecognition
+        : null,
+    [],
+  );
+
+  function startListening() {
+    if (!SpeechRecognitionCtor) {
+      setError("Speech recognition is not supported in this browser.");
+      shakeBar();
+      return;
+    }
+
+    // If one is already running, bail
+    if (recognitionRef.current) return;
+
+    // Snapshot whatever's in the box right now so we can append to it
+    textBeforeSpeechRef.current = text;
+
+    const recognition = new SpeechRecognitionCtor();
+    recognition.lang = "en-IN";
+    recognition.interimResults = true;
+    recognition.continuous = true;          // keep listening until user stops
+    recognition.maxAlternatives = 1;
+
+    let accumulated = "";                   // final transcript pieces this session
+
+    recognition.onstart = () => {
+      setListening(true);
+      setError(null);
+    };
+
+    recognition.onresult = (event) => {
+      let finals = "";
+      let interim = "";
+
+      for (let i = 0; i < event.results.length; i++) {
+        const chunk = event.results[i][0].transcript;
+        if (event.results[i].isFinal) {
+          finals += chunk;
+        } else {
+          interim += chunk;
+        }
+      }
+
+      accumulated = finals;
+      const prefix = textBeforeSpeechRef.current;
+      const combined = (prefix ? prefix + " " : "") + accumulated + (interim ? " " + interim : "");
+      setText(combined.replace(/\s{2,}/g, " "));
+    };
+
+    recognition.onerror = (event) => {
+      // "no-speech" and "aborted" are expected / harmless
+      if (event.error !== "aborted" && event.error !== "no-speech") {
+        setError(`Mic error: ${event.error}`);
+        shakeBar();
+      }
+    };
+
+    recognition.onend = () => {
+      setListening(false);
+      recognitionRef.current = null;
+    };
+
+    recognitionRef.current = recognition;
+    recognition.start();
+  }
+
+  function stopListening() {
+    if (recognitionRef.current) {
+      recognitionRef.current.stop();
+    }
+  }
+
+  function toggleListening() {
+    listening ? stopListening() : startListening();
+  }
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      if (recognitionRef.current) {
+        recognitionRef.current.abort();
+        recognitionRef.current = null;
+      }
+    };
+  }, []);
+
   const debouncedText = useDebouncedValue(text, 500);
   const previewChips = useMemo(() => previewParse(debouncedText), [debouncedText]);
   const showPreview = debouncedText.trim().length > 0 && Object.keys(previewChips).length > 0;
@@ -112,6 +208,8 @@ export default function Brief() {
 
   async function handleSubmit(e) {
     e.preventDefault();
+    // Stop listening if the user submits while mic is on
+    if (listening) stopListening();
     const trimmed = text.trim();
     if (!trimmed || submitting) return;
 
@@ -244,7 +342,7 @@ export default function Brief() {
                 transition={{ layout: morphSpring }}
                 onSubmit={handleSubmit}
                 className={
-                  "w-full rounded-xl bg-base border px-5 py-4 flex items-center gap-4 " +
+                  "w-full rounded-xl bg-base border px-5 py-4 flex items-center gap-3 " +
                   "transition-shadow duration-150 " +
                   // The input's own outline is suppressed below - a square
                   // ring on a child inside this rounded bar would look like a
@@ -265,6 +363,53 @@ export default function Brief() {
                   className="flex-1 min-w-0 bg-transparent text-base text-ink placeholder:text-ink/35
                              outline-none font-body"
                 />
+
+                {/* Mic button for speech-to-text */}
+                <motion.button
+                  type="button"
+                  onClick={toggleListening}
+                  whileHover={{ scale: 1.1 }}
+                  whileTap={{ scale: 0.9 }}
+                  title={listening ? "Stop listening" : "Speak your search"}
+                  className={
+                    "relative shrink-0 grid h-9 w-9 place-items-center rounded-full transition-colors duration-200 " +
+                    (listening
+                      ? "bg-rose-500/15 text-rose-500"
+                      : "bg-violet/10 text-violet hover:bg-violet/20")
+                  }
+                >
+                  {listening && (
+                    <motion.span
+                      className="absolute inset-0 rounded-full border-2 border-rose-500/60"
+                      initial={{ scale: 1, opacity: 0.8 }}
+                      animate={{ scale: 1.6, opacity: 0 }}
+                      transition={{ repeat: Infinity, duration: 1.2, ease: "easeOut" }}
+                    />
+                  )}
+                  {listening && (
+                    <motion.span
+                      className="absolute inset-0 rounded-full border-2 border-rose-500/40"
+                      initial={{ scale: 1, opacity: 0.6 }}
+                      animate={{ scale: 2, opacity: 0 }}
+                      transition={{ repeat: Infinity, duration: 1.2, ease: "easeOut", delay: 0.3 }}
+                    />
+                  )}
+                  <svg
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    className="h-4.5 w-4.5 relative z-10"
+                  >
+                    <rect x="9" y="2" width="6" height="12" rx="3" />
+                    <path d="M5 10a7 7 0 0 0 14 0" />
+                    <line x1="12" y1="17" x2="12" y2="21" />
+                    <line x1="8" y1="21" x2="16" y2="21" />
+                  </svg>
+                </motion.button>
+
                 {/* Dark ink on the amber fill rather than white: the light
                     end of the gradient is too pale to carry white text. */}
                 <motion.button
@@ -323,13 +468,37 @@ export default function Brief() {
                 </motion.div>
               ) : null}
             </AnimatePresence>
+
+            {/* Listening indicator below the bar */}
+            <AnimatePresence>
+              {listening && (
+                <motion.div
+                  key="mic-status"
+                  initial={{ opacity: 0, y: -4 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -4 }}
+                  transition={spring}
+                  className="mt-3 flex items-center justify-center gap-2"
+                >
+                  <motion.span
+                    className="h-2 w-2 rounded-full bg-rose-500"
+                    animate={{ scale: [1, 1.4, 1], opacity: [1, 0.5, 1] }}
+                    transition={{ repeat: Infinity, duration: 1, ease: "easeInOut" }}
+                  />
+                  <span className="text-[12px] font-medium text-rose-500/80 font-body">
+                    Listening… speak your search
+                  </span>
+                </motion.div>
+              )}
+            </AnimatePresence>
           </div>
 
           <p className="mt-3 text-[11.5px] text-ink/25 font-body">
-            Plain English works best — quantity, specs, budget, timeline.
+            Plain English works best — quantity, specs, budget, timeline. Or tap the mic to speak.
           </p>
         </div>
       </motion.div>
     </div>
   );
 }
+
