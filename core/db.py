@@ -96,6 +96,26 @@ class Approval(Base):
     synced: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
 
+class Order(Base):
+    __tablename__ = "orders"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    run_id: Mapped[str] = mapped_column(String(36), ForeignKey("runs.id"), nullable=False)
+    customer_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    customer_email: Mapped[str] = mapped_column(String(128), nullable=False)
+    customer_phone: Mapped[str] = mapped_column(String(32), nullable=False)
+    shipping_address: Mapped[str] = mapped_column(Text, nullable=False)
+    pincode: Mapped[str] = mapped_column(String(16), nullable=False)
+    payment_method: Mapped[str] = mapped_column(String(32), nullable=False, default="upi")
+    total_amount: Mapped[int] = mapped_column(Integer, nullable=False)
+    discount_amount: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    split_shipments: Mapped[list | dict] = mapped_column(JSON, nullable=False)
+    invoice_number: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="confirmed")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    synced: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+
+
 # Sync scans "give me everything not yet pushed"; these keep that cheap.
 Index("ix_runs_synced", Run.synced)
 Index("ix_decisions_synced", Decision.synced)
@@ -104,8 +124,10 @@ Index("ix_listings_snapshot_synced", ListingsSnapshot.synced)
 Index("ix_listings_snapshot_run_id", ListingsSnapshot.run_id)
 Index("ix_approvals_synced", Approval.synced)
 Index("ix_approvals_run_id", Approval.run_id)
+Index("ix_orders_synced", Order.synced)
+Index("ix_orders_run_id", Order.run_id)
 
-ALL_MODELS = (Run, Decision, ListingsSnapshot, Approval)
+ALL_MODELS = (Run, Decision, ListingsSnapshot, Approval, Order)
 
 # --- engine ----------------------------------------------------------------
 

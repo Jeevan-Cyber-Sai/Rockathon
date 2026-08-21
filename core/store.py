@@ -14,6 +14,7 @@ from .db import (
     Approval,
     Decision,
     ListingsSnapshot,
+    Order,
     Run,
     SessionLocal,
     new_id,
@@ -153,6 +154,45 @@ def _finish(run_id: str, status: str) -> None:
         s.commit()
 
 
+def create_order(
+    run_id: str,
+    customer_name: str,
+    customer_email: str,
+    customer_phone: str,
+    shipping_address: str,
+    pincode: str,
+    payment_method: str,
+    total_amount: int,
+    discount_amount: int,
+    split_shipments: list | dict,
+    invoice_number: str,
+    status: str = "confirmed",
+) -> str:
+    """Records a confirmed multi-vendor order in the ledger."""
+    order_id = new_id()
+    with SessionLocal() as s:
+        order = Order(
+            id=order_id,
+            run_id=run_id,
+            customer_name=customer_name,
+            customer_email=customer_email,
+            customer_phone=customer_phone,
+            shipping_address=shipping_address,
+            pincode=pincode,
+            payment_method=payment_method,
+            total_amount=total_amount,
+            discount_amount=discount_amount,
+            split_shipments=split_shipments,
+            invoice_number=invoice_number,
+            status=status,
+            created_at=utcnow(),
+            synced=False,
+        )
+        s.add(order)
+        s.commit()
+    return order_id
+
+
 # --- reads -----------------------------------------------------------------
 
 
@@ -163,7 +203,7 @@ def _row(obj) -> dict:
 
 
 def get_run(run_id: str) -> dict | None:
-    """The run plus its decisions, approvals and listing snapshots."""
+    """The run plus its decisions, approvals, listing snapshots and orders."""
     with SessionLocal() as s:
         run = s.get(Run, run_id)
         if run is None:
@@ -189,7 +229,33 @@ def get_run(run_id: str) -> dict | None:
                 .order_by(ListingsSnapshot.fetched_at)
             )
         ]
+        out["orders"] = [
+            _row(o)
+            for o in s.scalars(
+                select(Order).where(Order.run_id == run_id).order_by(Order.created_at.desc())
+            )
+        ]
         return out
+
+
+def get_order(order_id: str) -> dict | None:
+    with SessionLocal() as s:
+        order = s.get(Order, order_id)
+        return _row(order) if order else None
+
+
+def get_run_order(run_id: str) -> dict | None:
+    with SessionLocal() as s:
+        order = s.scalar(
+            select(Order).where(Order.run_id == run_id).order_by(Order.created_at.desc())
+        )
+        return _row(order) if order else None
+
+
+def list_orders(limit: int = 50) -> list[dict]:
+    with SessionLocal() as s:
+        rows = s.scalars(select(Order).order_by(Order.created_at.desc()).limit(limit))
+        return [_row(r) for r in rows]
 
 
 def list_runs(limit: int = 50) -> list[dict]:
@@ -197,3 +263,4 @@ def list_runs(limit: int = 50) -> list[dict]:
     with SessionLocal() as s:
         rows = s.scalars(select(Run).order_by(Run.created_at.desc()).limit(limit))
         return [_row(r) for r in rows]
+

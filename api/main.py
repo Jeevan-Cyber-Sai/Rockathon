@@ -106,6 +106,54 @@ async def list_runs(limit: int = 50):
     return store.list_runs(limit=limit)
 
 
+class CheckoutIn(BaseModel):
+    customer_name: str
+    customer_email: str
+    customer_phone: str
+    shipping_address: str
+    pincode: str
+    payment_method: str = "upi"
+    custom_lines: list[dict] | None = None
+
+
+@app.post("/runs/{run_id}/checkout")
+async def checkout_run(run_id: str, body: CheckoutIn):
+    from core.checkout import execute_checkout
+
+    row = store.get_run(run_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="run not found")
+
+    try:
+        order = execute_checkout(
+            run_id=run_id,
+            customer_name=body.customer_name,
+            customer_email=body.customer_email,
+            customer_phone=body.customer_phone,
+            shipping_address=body.shipping_address,
+            pincode=body.pincode,
+            payment_method=body.payment_method,
+            custom_lines=body.custom_lines,
+        )
+        return order
+    except Exception as e:
+        log.exception(f"Checkout failed for run {run_id}")
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.get("/runs/{run_id}/order")
+async def get_run_order(run_id: str):
+    order = store.get_run_order(run_id)
+    if order is None:
+        raise HTTPException(status_code=404, detail="no order found for this run")
+    return order
+
+
+@app.get("/orders")
+async def list_orders(limit: int = 50):
+    return store.list_orders(limit=limit)
+
+
 @app.post("/runs/{run_id}/approve")
 async def approve_run(run_id: str, body: ApproveIn):
     row = store.get_run(run_id)
