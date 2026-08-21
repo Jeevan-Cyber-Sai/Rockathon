@@ -25,7 +25,9 @@ export default function LedgerRow({ run, expanded, onExpandToggle, onResume, onR
   const detail = run._detail;
   const decision = detail?.decisions?.[detail.decisions.length - 1];
   const totalCost = decision?.total_cost;
-  const order = detail?.orders?.[0];
+  // Confirmation lives inside the decision's own JSON (chosen.confirmed_at) -
+  // no separate order record, no fabricated invoice/tracking data.
+  const confirmedAt = decision?.chosen?.confirmed_at ?? null;
 
   function handleClick() {
     if (isLive) {
@@ -51,7 +53,7 @@ export default function LedgerRow({ run, expanded, onExpandToggle, onResume, onR
             {truncate(run.brief_text, 90)}
           </span>
 
-          {order ? (
+          {confirmedAt ? (
             <span className="shrink-0 rounded-full bg-emerald-500/10 border border-emerald-500/20 px-2.5 py-0.5 text-xs font-semibold text-emerald-700 flex items-center gap-1">
               <span>✓ Ordered</span>
             </span>
@@ -136,45 +138,6 @@ export default function LedgerRow({ run, expanded, onExpandToggle, onResume, onR
                 </div>
               </div>
 
-              {/* Order & Shipment Tracking Box if bought */}
-              {order && (
-                <div className="mb-4 rounded-2xl border border-emerald-500/30 bg-emerald-500/5 p-4">
-                  <div className="flex items-center justify-between border-b border-emerald-500/20 pb-2.5 mb-3">
-                    <div>
-                      <span className="text-xs font-bold uppercase tracking-wider text-emerald-800 font-body">
-                        Universal Order Confirmed
-                      </span>
-                      <p className="text-[11px] text-ink/50 font-body">
-                        Invoice: <span className="font-semibold text-ink">{order.invoice_number}</span> · Paid via {order.payment_method?.toUpperCase()}
-                      </p>
-                    </div>
-                    <span className="rounded-md bg-emerald-600 px-2 py-0.5 text-xs font-bold text-white">
-                      ₹{order.total_amount?.toLocaleString("en-IN")}
-                    </span>
-                  </div>
-
-                  <div className="space-y-2">
-                    {order.split_shipments?.map((s, idx) => (
-                      <div
-                        key={idx}
-                        className="rounded-xl border border-edge bg-panel p-2.5 flex items-center justify-between text-xs"
-                      >
-                        <div>
-                          <span className="rounded bg-violet/10 px-1.5 py-0.5 text-[10px] font-semibold text-violet mr-2">
-                            {s.vendor}
-                          </span>
-                          <span className="font-medium text-ink/90">{s.title}</span>
-                          <span className="text-ink/40 ml-1">· Tracking: {s.tracking_number}</span>
-                        </div>
-                        <span className="text-[11px] font-semibold text-emerald-700 shrink-0 ml-2">
-                          ETA {s.delivery_eta}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
               {!detail ? (
                 <p className="text-xs text-ink/30 font-body py-3">Loading details…</p>
               ) : decision?.chosen?.mode === "infeasible" ? (
@@ -183,7 +146,7 @@ export default function LedgerRow({ run, expanded, onExpandToggle, onResume, onR
                   <p className="mt-1 text-xs text-ink/50 font-body">{decision.why_rejected}</p>
                 </div>
               ) : decision ? (
-                <DecisionPanel decision={decision} embedded order={order} onCheckout={() => onResume(run.id)} />
+                <DecisionPanel decision={decision} embedded onCheckout={() => onResume(run.id)} />
               ) : (
                 <p className="text-xs text-ink/40 font-body py-3">No decision recorded for this run.</p>
               )}

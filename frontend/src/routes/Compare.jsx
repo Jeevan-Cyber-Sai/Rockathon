@@ -3,7 +3,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { Link, useLocation, useParams } from "react-router-dom";
 import { morphSpring, spring } from "../lib/motion";
 import { rulesToChips } from "../lib/formatRule";
-import { getRun, getRunOrder } from "../lib/api";
+import { confirmRun, getRun } from "../lib/api";
 import { useRunStream } from "../lib/useRunStream";
 import Chip from "../components/Chip";
 import StepTracker from "../components/StepTracker";
@@ -11,7 +11,7 @@ import ProductCard from "../components/ProductCard";
 import DecisionPanel from "../components/DecisionPanel";
 import ApprovalPanel from "../components/ApprovalPanel";
 import ConnectionBanner from "../components/ConnectionBanner";
-import CheckoutModal from "../components/CheckoutModal";
+import ConfirmationModal from "../components/ConfirmationModal";
 
 const REVEAL_STAGGER_MS = 80; // within the requested 60-100ms window
 const key = (l) => `${l.source}:${l.product_id}`;
@@ -35,10 +35,29 @@ export default function Compare() {
   const [failReason, setFailReason] = useState(null);
   const [notFound, setNotFound] = useState(false);
 
-  // Universal Checkout State
-  const [isCheckoutOpen, setIsCheckoutOpen] = useState(false);
-  const [selectedSingleItem, setSelectedSingleItem] = useState(null);
-  const [currentOrder, setCurrentOrder] = useState(null);
+  // Simulated purchase confirmation - no real payment flow. Confirming
+  // calls POST /runs/:id/confirm, a real write that folds a confirmed_at
+  // timestamp into the decision already on the server (no card/payment
+  // fields sent or accepted) - not a client-side-only toggle.
+  const [isConfirmationOpen, setIsConfirmationOpen] = useState(false);
+  const [confirming, setConfirming] = useState(false);
+  const [confirmError, setConfirmError] = useState(null);
+
+  async function handleConfirmPurchase() {
+    setConfirming(true);
+    setConfirmError(null);
+    try {
+      const confirmed = await confirmRun(runId);
+      // Same decision, now carrying chosen.confirmed_at - swapping it into
+      // local state is what flips DecisionPanel to its confirmed display.
+      setDecision(confirmed);
+      setIsConfirmationOpen(true);
+    } catch (err) {
+      setConfirmError(err.message);
+    } finally {
+      setConfirming(false);
+    }
+  }
 
   const revealTimers = useRef([]);
 
@@ -74,15 +93,6 @@ export default function Compare() {
       if (pending && run.status === "awaiting_approval") {
         setApproval({ question: pending.question, options: pending.options });
         setDoneStages((prev) => new Set([...prev, "filtered", "scored", "awaiting_approval"]));
-      }
-      if (run.orders?.length) {
-        setCurrentOrder(run.orders[0]);
-      } else {
-        getRunOrder(runId)
-          .then((ord) => {
-            if (!cancelled && ord) setCurrentOrder(ord);
-          })
-          .catch(() => {});
       }
       if (run.status === "failed" && run.decisions?.length) {
         const last = run.decisions[run.decisions.length - 1];
@@ -274,11 +284,9 @@ export default function Compare() {
       {decision && (
         <DecisionPanel
           decision={decision}
-          order={currentOrder}
-          onCheckout={() => {
-            setSelectedSingleItem(null);
-            setIsCheckoutOpen(true);
-          }}
+          onCheckout={handleConfirmPurchase}
+          confirming={confirming}
+          confirmError={confirmError}
         />
       )}
 
@@ -290,14 +298,10 @@ export default function Compare() {
         </AnimatePresence>
       </motion.div>
 
-      {/* Universal One-Click Checkout Drawer */}
-      <CheckoutModal
-        isOpen={isCheckoutOpen}
-        onClose={() => setIsCheckoutOpen(false)}
-        runId={runId}
+      <ConfirmationModal
+        isOpen={isConfirmationOpen}
+        onClose={() => setIsConfirmationOpen(false)}
         decision={decision}
-        singleItem={selectedSingleItem}
-        onOrderSuccess={(ord) => setCurrentOrder(ord)}
       />
     </div>
   );

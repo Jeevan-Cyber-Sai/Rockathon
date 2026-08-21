@@ -107,21 +107,43 @@ so keep it a short, natural noun phrase - not a full restatement of the brief.
 
 For any OTHER attribute the brief states that isn't one of the standard numeric fields \
 above (material, capacity, connectivity, a feature, a certification, a size, a color, \
-anything a listing's title would plausibly mention), invent a clear snake_case key and set \
-its value to a SHORT TEXT PHRASE - not a bare number - describing what a matching product \
-listing's title should contain. This text phrase is matched against real listing titles \
-verbatim, so phrase it the way a seller would actually write it: "stainless steel" not \
-"steel material", "1 litre" not just "1", "leak proof" not "leakproof=true", "bluetooth" \
-not "wireless connectivity type". Use op "==" for these (they mean "this phrase should \
-appear on a matching listing"). Only include a key the brief actually states or clearly \
-implies - never invent an unstated constraint.
+anything a listing's title would plausibly mention), invent a clear snake_case key. Two \
+shapes for the value, depending on what kind of attribute it is:
+
+- A MEASURED QUANTITY (capacity, wattage, screen size, battery, weight - anything with a \
+number and a unit): write it as plain "NUMBER+UNIT" text - "400L", "20000mAh", "65 inch" \
+- not just the bare number. The matching engine treats these as a MINIMUM by default: \
+"400L capacity" accepts a 411L or 431L listing, the same convention already used for \
+ram_gb/storage_gb ("at least 16GB" accepts 32GB). Use op ">=" unless the brief clearly \
+wants a maximum ("no more than 400L" -> "<=") or a true exact value ("exactly 400L" -> \
+"=="). This is measuring real-world quantities pulled from marketing text, so op "==" \
+should be rare - only when the brief's own wording leaves no other reading.
+
+- A TEXT PHRASE (material, connectivity, a named feature, a certification): a short \
+phrase describing what a matching listing's title should contain, written the way a \
+seller would actually write it - "stainless steel" not "steel material", "leak proof" not \
+"leakproof=true", "bluetooth" not "wireless connectivity type". Use op "==".
+
+Only include a key the brief actually states or clearly implies - never invent an unstated \
+constraint.
 
 Elasticity: quantity and price/budget caps are almost always rigid (elastic=false) unless \
 the brief says otherwise ("budget flexible", "quantity approximate"). Delivery time and \
-soft specs (including the text-phrase attributes above) are usually bendable (elastic=true) \
-unless stated as a hard requirement.
+soft specs (including every attribute above, both shapes) are usually bendable \
+(elastic=true) unless stated as a hard requirement.
+
+For the attributes above specifically, elastic=false is a much stronger claim than "the \
+brief mentions this" - it means a real listing gets REJECTED outright if its title doesn't \
+confirm the value, and seller-written titles routinely omit true details (a fridge's own \
+color is often just never mentioned). So elastic=false should be reserved for attributes a \
+real title would almost always state if true (a brand name; a category-defining feature \
+like "4K" or "wireless") or ones the brief insists on with exclusive language ("only in \
+black", "must be exactly 400L", "no other colour"). A plainly-stated but easy-to-omit \
+detail - color, an exact minor measurement, packaging - should default to elastic=true \
+even when the brief states it as a plain fact, not a wish.
+
 RIGID signals (elastic=false, higher confidence): "maximum", "must", "no more than", \
-"exactly", "cap", "at most".
+"exactly", "cap", "at most", "only", "no other".
 BENDABLE signals (elastic=true): "within", "ideally", "around", "~", "roughly", \
 "approximately", "flexible", "asap".
 When the phrasing gives no clear signal either way, set elastic=true and confidence \

@@ -216,7 +216,9 @@ function Allocation({ allocation }) {
  * `embedded` drops the page-level centering (mx-auto max-w-3xl mt-6) for
  * reuse inside a container that already constrains its own width - the
  * Ledger's row-expand area - without touching Compare.jsx's usage. */
-export default function DecisionPanel({ decision, embedded = false, onCheckout, order = null }) {
+export default function DecisionPanel({
+  decision, embedded = false, onCheckout, confirming = false, confirmError = null,
+}) {
   const [expanded, setExpanded] = useState(false);
   const { chosen, runner_up, why_rejected, counterfactual, total_cost, latest_delivery } = decision;
 
@@ -227,6 +229,10 @@ export default function DecisionPanel({ decision, embedded = false, onCheckout, 
   const potentialSavings =
     runner_up?.total_cost && total_cost ? runner_up.total_cost - total_cost : 0;
   const winner = chosen.lines?.[0];
+  // Confirmation lives inside the decision's own JSON (chosen.confirmed_at),
+  // not a separate order record - no fabricated invoice/tracking data, and
+  // no schema change needed to persist it.
+  const confirmedAt = chosen.confirmed_at ?? null;
 
   return (
     <motion.div
@@ -309,23 +315,37 @@ export default function DecisionPanel({ decision, embedded = false, onCheckout, 
           )}
         </div>
 
-        {order ? (
+        {confirmedAt ? (
           <div className="flex items-center gap-2 rounded-xl bg-emerald-500/10 border border-emerald-500/20 px-4 py-2.5 text-xs font-semibold text-emerald-800">
-            <span>✓ Order Placed</span>
-            <span className="font-mono text-[11px] text-emerald-700">
-              ({order.invoice_number})
+            <span>✓ Confirmed (simulated)</span>
+            <span className="font-normal text-[11px] text-emerald-700">
+              {new Date(confirmedAt).toLocaleDateString("en-IN", { day: "numeric", month: "short" })}
             </span>
           </div>
         ) : onCheckout ? (
-          <motion.button
-            type="button"
-            onClick={onCheckout}
-            whileHover={{ scale: 1.02 }}
-            whileTap={{ scale: 0.98 }}
-            className="rounded-xl bg-violet px-6 py-3 text-xs font-bold text-white shadow-lg shadow-violet/25 hover:bg-violet-deep transition-all flex items-center justify-center gap-2"
-          >
-            <span>⚡ One-Click Buy with Shopyx</span>
-          </motion.button>
+          <div className="flex flex-col items-end gap-1.5">
+            <motion.button
+              type="button"
+              onClick={onCheckout}
+              disabled={confirming}
+              whileHover={confirming ? {} : { scale: 1.02 }}
+              whileTap={confirming ? {} : { scale: 0.98 }}
+              className="rounded-xl bg-violet px-6 py-3 text-xs font-bold text-white shadow-lg shadow-violet/25 hover:bg-violet-deep transition-all flex items-center justify-center gap-2 disabled:opacity-60"
+            >
+              {confirming ? (
+                <motion.span
+                  className="h-3.5 w-3.5 rounded-full border-2 border-white/40 border-t-white"
+                  animate={{ rotate: 360 }}
+                  transition={{ repeat: Infinity, duration: 0.7, ease: "linear" }}
+                />
+              ) : (
+                <span>✓ Confirm This Purchase (Simulated)</span>
+              )}
+            </motion.button>
+            {confirmError && (
+              <span className="text-[11px] text-rose-600 font-body">{confirmError}</span>
+            )}
+          </div>
         ) : null}
       </div>
 

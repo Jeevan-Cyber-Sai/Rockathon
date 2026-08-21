@@ -97,6 +97,31 @@ def save_decision(
     return decision_id
 
 
+def mark_decision_confirmed(run_id: str) -> dict:
+    """Marks the run's latest decision as confirmed - a simulated purchase,
+    not a real checkout. Folds a plain confirmed_at timestamp into the
+    existing `chosen` JSON blob, the same schemaless-JSON pattern already
+    used for price_context/savings_vs_single - no new column, no migration
+    against the existing ledger.db, no fabricated invoice/tracking data.
+
+    Reassigns `chosen` to a new dict (rather than mutating the existing one
+    in place) because SQLAlchemy's JSON column type only detects a changed
+    attribute reference, not an in-place mutation of the same dict object.
+    """
+    with SessionLocal() as s:
+        decision = s.scalar(
+            select(Decision).where(Decision.run_id == run_id).order_by(Decision.created_at.desc())
+        )
+        if decision is None:
+            raise KeyError(f"no decision found for run {run_id}")
+        if not decision.chosen or decision.chosen.get("mode") == "infeasible":
+            raise ValueError("this run has no confirmable allocation")
+        decision.chosen = {**decision.chosen, "confirmed_at": utcnow().isoformat()}
+        decision.synced = False
+        s.commit()
+        return _row(decision)
+
+
 def request_approval(run_id: str, question: str, options: list | dict) -> str:
     """Park the run on a human. Returns the approval id."""
     approval_id = new_id()

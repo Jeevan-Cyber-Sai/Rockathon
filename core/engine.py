@@ -106,19 +106,67 @@ def _normalise_phrase(s: str) -> str:
 _NEGATORS = ("non", "no", "not", "without", "excluding")
 
 
-def _requirement_phrase_found(offer: Listing, rule: Rule) -> bool:
-    """Generic, category-agnostic requirement check: is this rule's value (a
-    short phrase - "stainless steel", "leak proof", "bluetooth") asserted by
-    the offer's title? There is no per-attribute schema or unit parsing here
-    by design - a phrase not found means UNKNOWN, not "confirmed absent": a
-    seller's title can easily omit an attribute the product genuinely has.
-    Caller decides what unknown means for rigid vs. elastic.
+# "400L", "20000mAh", "65 inch" - a bare number glued to a unit. Matched
+# both orderings since the parser isn't always consistent about which side
+# the unit lands on ("SPF 50" vs "50 SPF").
+_NUMBER_THEN_UNIT = re.compile(r"^\s*(\d+(?:\.\d+)?)\s*([a-zA-Z%]+)\s*$")
+_UNIT_THEN_NUMBER = re.compile(r"^\s*([a-zA-Z%]+)\s*(\d+(?:\.\d+)?)\s*$")
 
-    A negated occurrence doesn't count, so a title has to actually claim the
-    attribute rather than merely mention the word.
+
+def _parse_numeric_unit(value: str) -> tuple[float, str] | None:
+    """'400L' -> (400.0, 'l'). Not a text phrase like 'stainless steel' or
+    'leak proof' - those don't match either pattern, so this returns None
+    and the caller falls back to phrase matching."""
+    text = value.strip()
+    m = _NUMBER_THEN_UNIT.match(text)
+    if m:
+        return float(m.group(1)), m.group(2).lower()
+    m = _UNIT_THEN_NUMBER.match(text)
+    if m:
+        return float(m.group(2)), m.group(1).lower()
+    return None
+
+
+def _title_numbers_for_unit(title: str, unit: str) -> list[float]:
+    """Every number in the title glued to the same unit token, either
+    ordering ('411L', 'L 411') - e.g. unit='l' finds the 411 in "Whirlpool
+    411L ... Refrigerator". \\b after the unit stops 'l' matching inside an
+    unrelated word."""
+    low = title.lower()
+    return [float(m.group(1)) for m in re.finditer(rf"(\d+(?:\.\d+)?)\s*{re.escape(unit)}\b", low)] + \
+           [float(m.group(1)) for m in re.finditer(rf"\b{re.escape(unit)}\s*(\d+(?:\.\d+)?)", low)]
+
+
+def _requirement_phrase_found(offer: Listing, rule: Rule) -> bool:
+    """Generic, category-agnostic requirement check: does the offer's title
+    confirm this rule's value? Two shapes, tried in order:
+
+    1. A measured quantity ("400L", "20000mAh", "65 inch") - compared
+       NUMERICALLY against any same-unit number in the title, using the
+       rule's op. A bare "==" is treated as ">=" here specifically: exact
+       equality on a physical measurement pulled from marketing text is
+       almost never the real ask - "400L capacity" means "at least that
+       much", the same convention ram_gb/storage_gb already use. This is
+       what lets "400L" correctly accept a 411L or 431L listing instead of
+       demanding the literal substring "400l".
+    2. A text phrase ("stainless steel", "leak proof", "bluetooth") -
+       substring-matched as before, negation-aware.
+
+    Either way, not found means UNKNOWN, not "confirmed absent": a seller's
+    title can easily omit an attribute the product genuinely has. Caller
+    decides what unknown means for rigid vs. elastic.
     """
     if not str(rule.value).strip():
         return False
+
+    numeric = _parse_numeric_unit(str(rule.value))
+    if numeric is not None:
+        target, unit = numeric
+        candidates = _title_numbers_for_unit(offer.title, unit)
+        if not candidates:
+            return False  # unit never appears in the title - unknown, not a text match attempt
+        op = rule.op if rule.op != "==" else ">="
+        return any(_compare(op, val, target) for val in candidates)
 
     # A separator inside one concept is written every which way ("Wi-Fi",
     # "Wi Fi", "WiFi"), so each side is compared both with the separator as a

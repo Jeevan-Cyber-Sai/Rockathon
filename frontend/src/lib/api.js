@@ -48,15 +48,14 @@ export function approveRun(runId, chosenOption) {
   });
 }
 
-export function checkoutRun(runId, checkoutData) {
-  return request(`/runs/${runId}/checkout`, {
-    method: "POST",
-    body: JSON.stringify(checkoutData),
-  });
-}
-
 export function getRunOrder(runId) {
   return request(`/runs/${runId}/order`);
+}
+
+/** Marks the run's decision confirmed - a simulated purchase, not a real
+ * checkout. No payment data sent or accepted. */
+export function confirmRun(runId) {
+  return request(`/runs/${runId}/confirm`, { method: "POST" });
 }
 
 export function listOrders(limit = 50) {

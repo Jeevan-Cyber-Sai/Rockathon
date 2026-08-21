@@ -125,39 +125,22 @@ async def list_runs(limit: int = 50):
     return store.list_runs(limit=limit)
 
 
-class CheckoutIn(BaseModel):
-    customer_name: str
-    customer_email: str
-    customer_phone: str
-    shipping_address: str
-    pincode: str
-    payment_method: str = "upi"
-    custom_lines: list[dict] | None = None
-
-
-@app.post("/runs/{run_id}/checkout")
-async def checkout_run(run_id: str, body: CheckoutIn):
-    from core.checkout import execute_checkout
-
+@app.post("/runs/{run_id}/confirm")
+async def confirm_run(run_id: str):
+    """Marks the run's decision as confirmed - a simulated purchase, not a
+    real checkout. No payment fields accepted or required; nothing here
+    talks to a payment gateway."""
     row = store.get_run(run_id)
     if row is None:
         raise HTTPException(status_code=404, detail="run not found")
-
+    if row["status"] != "completed":
+        raise HTTPException(status_code=400,
+                            detail=f"run is not completed (status={row['status']})")
     try:
-        order = execute_checkout(
-            run_id=run_id,
-            customer_name=body.customer_name,
-            customer_email=body.customer_email,
-            customer_phone=body.customer_phone,
-            shipping_address=body.shipping_address,
-            pincode=body.pincode,
-            payment_method=body.payment_method,
-            custom_lines=body.custom_lines,
-        )
-        return order
-    except Exception as e:
-        log.exception(f"Checkout failed for run {run_id}")
-        raise HTTPException(status_code=400, detail=str(e))
+        decision = store.mark_decision_confirmed(run_id)
+    except (KeyError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return decision
 
 
 @app.get("/runs/{run_id}/order")

@@ -5,6 +5,13 @@ import { pageVariants, spring, staggerContainer, staggerItem } from "../lib/moti
 import { getRun, listRuns } from "../lib/api";
 import LedgerRow from "../components/LedgerRow";
 
+// Confirmation lives inside the decision's own JSON (chosen.confirmed_at) -
+// no separate order record to check, no fabricated invoice data.
+function isConfirmed(run) {
+  const decisions = run._detail?.decisions ?? run.decisions;
+  return Boolean(decisions?.[decisions.length - 1]?.chosen?.confirmed_at);
+}
+
 function RowSkeleton() {
   return (
     <div className="flex items-center gap-4 py-4 border-b border-edge/60 last:border-0">
@@ -86,11 +93,9 @@ export default function Ledger() {
         (r.brief_text && r.brief_text.toLowerCase().includes(searchFilter.toLowerCase())) ||
         r.id.toLowerCase().includes(searchFilter.toLowerCase());
 
-      const hasOrder = Boolean(r._detail?.orders?.length || r.orders?.length);
-
       const matchStatus =
         statusFilter === "all" ||
-        (statusFilter === "ordered" && hasOrder) ||
+        (statusFilter === "ordered" && isConfirmed(r)) ||
         (statusFilter === "completed" && r.status === "completed") ||
         (statusFilter === "live" && (r.status === "running" || r.status === "awaiting_approval")) ||
         (statusFilter === "failed" && r.status === "failed");
@@ -105,7 +110,7 @@ export default function Ledger() {
       total: runs.length,
       completed: runs.filter((r) => r.status === "completed").length,
       live: runs.filter((r) => r.status === "running" || r.status === "awaiting_approval").length,
-      ordered: runs.filter((r) => r._detail?.orders?.length || r.orders?.length).length,
+      ordered: runs.filter(isConfirmed).length,
     };
   }, [runs]);
 
