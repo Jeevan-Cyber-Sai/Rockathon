@@ -15,6 +15,15 @@ const EXAMPLES = [
 
 const PREVIEW_ORDER = ["quantity", "ram", "storage", "price", "delivery"];
 
+// Matches adapters/quickcommerce.py's KNOWN_PLATFORMS exactly - the backend
+// validates against its own live/fallback list too, so a stale name here
+// just gets silently dropped server-side rather than breaking anything.
+const QC_PLATFORMS = [
+  "Flipkart", "Myntra", "Nykaa", "BlinkIt", "Zepto", "Swiggy",
+  "BigBasket", "DMart", "JioMart", "Minutes", "Amazon",
+];
+const PINCODE_PLATFORMS = new Set(["DMart", "JioMart", "Minutes"]);
+
 // A genuine spring shake: each leg is its own point-to-point spring (real
 // overshoot-and-settle physics), chained with decaying amplitude - not a
 // single linear back-and-forth tween.
@@ -107,8 +116,43 @@ export default function Brief() {
   const navigate = useNavigate();
   const barControls = useAnimation();
 
+  // ── QuickCommerce platform panel (optional, collapsed by default) ──
+  // Closed + untouched, this changes nothing: handleSubmit only attaches a
+  // location payload when selectedPlatforms is non-empty.
+  const [showLocationPanel, setShowLocationPanel] = useState(false);
+  const [selectedPlatforms, setSelectedPlatforms] = useState(() => new Set());
+  const [pincode, setPincode] = useState("");
+  const [coords, setCoords] = useState(null);
+  const [locationStatus, setLocationStatus] = useState("idle"); // idle | requesting | granted | denied | unsupported
+
+  function togglePlatform(name) {
+    setSelectedPlatforms((prev) => {
+      const next = new Set(prev);
+      next.has(name) ? next.delete(name) : next.add(name);
+      return next;
+    });
+    if (error) setError(null);
+  }
+
+  function detectLocation() {
+    if (!navigator.geolocation) {
+      setLocationStatus("unsupported");
+      return;
+    }
+    setLocationStatus("requesting");
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        setCoords({ lat: pos.coords.latitude, lon: pos.coords.longitude });
+        setLocationStatus("granted");
+      },
+      () => setLocationStatus("denied"),
+      { timeout: 10000 },
+    );
+  }
+
   // ── Speech-to-text ──
   const [listening, setListening] = useState(false);
+  const [speechLang, setSpeechLang] = useState("en-IN"); // "en-IN" | "ta-IN"
   const recognitionRef = useRef(null);
   const textBeforeSpeechRef = useRef("");
 
@@ -135,7 +179,7 @@ export default function Brief() {
     textBeforeSpeechRef.current = text;
 
     const recognition = new SpeechRecognitionCtor();
-    recognition.lang = "en-IN";
+    recognition.lang = speechLang;
     recognition.interimResults = true;
     recognition.continuous = true;          // keep listening until user stops
     recognition.maxAlternatives = 1;
@@ -167,8 +211,13 @@ export default function Brief() {
     };
 
     recognition.onerror = (event) => {
-      // "no-speech" and "aborted" are expected / harmless
-      if (event.error !== "aborted" && event.error !== "no-speech") {
+      if (event.error === "not-allowed") {
+        setError("Microphone permission was denied. Allow mic access and try again.");
+        shakeBar();
+      } else if (event.error === "no-speech") {
+        setError("No speech detected — try speaking closer to the mic.");
+        shakeBar();
+      } else if (event.error !== "aborted") {
         setError(`Mic error: ${event.error}`);
         shakeBar();
       }
@@ -256,6 +305,16 @@ export default function Brief() {
     const query = (customText ?? text).trim();
     if (!query || submitting) return;
 
+    // Same rule the backend itself enforces (a real 400 if violated) -
+    // checked here first so choosing platforms without detecting location
+    // doesn't cost a round trip to find out.
+    const platforms = Array.from(selectedPlatforms);
+    if (platforms.length > 0 && !coords) {
+      setError("Detect your location first, or clear the selected platforms.");
+      shakeBar();
+      return;
+    }
+
     setSubmitting(true);
     setError(null);
     try {
@@ -266,7 +325,14 @@ export default function Brief() {
         localStorage.setItem("shopyx_recent_searches", JSON.stringify(updated));
       } catch {}
 
-      const { run_id } = await postBrief(query);
+      // undefined (not an object with empty platforms) when the panel was
+      // never used - postBrief then sends exactly {text}, unchanged from
+      // before QuickCommerce existed.
+      const qcLocation = platforms.length > 0
+        ? { lat: coords.lat, lon: coords.lon, ...(pincode.length === 6 ? { pincode } : {}), platforms }
+        : undefined;
+
+      const { run_id } = await postBrief(query, qcLocation);
       // Navigate on success only - the bar's layoutId morph is what carries
       // it into the Compare header. Nothing to reset: this component unmounts.
       navigate(`/compare/${run_id}`, { state: { briefText: query } });
@@ -430,51 +496,92 @@ export default function Brief() {
                              outline-none font-body"
                 />
 
-                {/* Mic button for speech-to-text */}
-                <motion.button
-                  type="button"
-                  onClick={toggleListening}
-                  whileHover={{ scale: 1.1 }}
-                  whileTap={{ scale: 0.9 }}
-                  title={listening ? "Stop listening" : "Speak your search"}
-                  className={
-                    "relative shrink-0 grid h-9 w-9 place-items-center rounded-full transition-colors duration-200 " +
-                    (listening
-                      ? "bg-rose-500/15 text-rose-500"
-                      : "bg-violet/10 text-violet hover:bg-violet/20")
-                  }
-                >
-                  {listening && (
-                    <motion.span
-                      className="absolute inset-0 rounded-full border-2 border-rose-500/60"
-                      initial={{ scale: 1, opacity: 0.8 }}
-                      animate={{ scale: 1.6, opacity: 0 }}
-                      transition={{ repeat: Infinity, duration: 1.2, ease: "easeOut" }}
-                    />
-                  )}
-                  {listening && (
-                    <motion.span
-                      className="absolute inset-0 rounded-full border-2 border-rose-500/40"
-                      initial={{ scale: 1, opacity: 0.6 }}
-                      animate={{ scale: 2, opacity: 0 }}
-                      transition={{ repeat: Infinity, duration: 1.2, ease: "easeOut", delay: 0.3 }}
-                    />
-                  )}
-                  <svg
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    className="h-4.5 w-4.5 relative z-10"
-                  >
-                    <rect x="9" y="2" width="6" height="12" rx="3" />
-                    <path d="M5 10a7 7 0 0 0 14 0" />
-                    <line x1="12" y1="17" x2="12" y2="21" />
-                    <line x1="8" y1="21" x2="16" y2="21" />
-                  </svg>
-                </motion.button>
+                {/* Language toggle + Mic button — hidden entirely if browser
+                    doesn't support the Web Speech API (graceful degradation). */}
+                {SpeechRecognitionCtor && (
+                  <>
+                    {/* Compact language toggle */}
+                    <div
+                      className="shrink-0 flex rounded-full border border-edge bg-base overflow-hidden
+                                 text-[10px] font-semibold font-body select-none"
+                    >
+                      <button
+                        type="button"
+                        onClick={() => { setSpeechLang("en-IN"); if (error) setError(null); }}
+                        className={
+                          "px-2 py-1 transition-colors duration-150 " +
+                          (speechLang === "en-IN"
+                            ? "bg-violet/15 text-violet"
+                            : "text-ink/40 hover:text-ink/60")
+                        }
+                      >
+                        EN
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => { setSpeechLang("ta-IN"); if (error) setError(null); }}
+                        className={
+                          "px-2 py-1 transition-colors duration-150 " +
+                          (speechLang === "ta-IN"
+                            ? "bg-violet/15 text-violet"
+                            : "text-ink/40 hover:text-ink/60")
+                        }
+                      >
+                        தமி
+                      </button>
+                    </div>
+
+                    {/* Mic button for speech-to-text */}
+                    <motion.button
+                      type="button"
+                      onClick={toggleListening}
+                      whileHover={{ scale: 1.1 }}
+                      whileTap={{ scale: 0.9 }}
+                      title={
+                        listening
+                          ? "Stop listening"
+                          : `Speak your search (${speechLang === "ta-IN" ? "Tamil" : "English"})`
+                      }
+                      className={
+                        "relative shrink-0 grid h-9 w-9 place-items-center rounded-full transition-colors duration-200 " +
+                        (listening
+                          ? "bg-rose-500/15 text-rose-500"
+                          : "bg-violet/10 text-violet hover:bg-violet/20")
+                      }
+                    >
+                      {listening && (
+                        <motion.span
+                          className="absolute inset-0 rounded-full border-2 border-rose-500/60"
+                          initial={{ scale: 1, opacity: 0.8 }}
+                          animate={{ scale: 1.6, opacity: 0 }}
+                          transition={{ repeat: Infinity, duration: 1.2, ease: "easeOut" }}
+                        />
+                      )}
+                      {listening && (
+                        <motion.span
+                          className="absolute inset-0 rounded-full border-2 border-rose-500/40"
+                          initial={{ scale: 1, opacity: 0.6 }}
+                          animate={{ scale: 2, opacity: 0 }}
+                          transition={{ repeat: Infinity, duration: 1.2, ease: "easeOut", delay: 0.3 }}
+                        />
+                      )}
+                      <svg
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        className="h-4.5 w-4.5 relative z-10"
+                      >
+                        <rect x="9" y="2" width="6" height="12" rx="3" />
+                        <path d="M5 10a7 7 0 0 0 14 0" />
+                        <line x1="12" y1="17" x2="12" y2="21" />
+                        <line x1="8" y1="21" x2="16" y2="21" />
+                      </svg>
+                    </motion.button>
+                  </>
+                )}
 
                 {/* Dark ink on the amber fill rather than white: the light
                     end of the gradient is too pale to carry white text. */}
@@ -552,8 +659,118 @@ export default function Brief() {
                     transition={{ repeat: Infinity, duration: 1, ease: "easeInOut" }}
                   />
                   <span className="text-[12px] font-medium text-rose-500/80 font-body">
-                    Listening… speak your search
+                    Listening ({speechLang === "ta-IN" ? "Tamil" : "English"})… speak your search
                   </span>
+                </motion.div>
+              )}
+            </AnimatePresence>
+
+            {/* QuickCommerce platform panel - collapsed by default, so
+                nothing here changes behavior unless it's opened. */}
+            <button
+              type="button"
+              onClick={() => setShowLocationPanel((v) => !v)}
+              className="mt-3 flex items-center gap-1.5 text-[12px] font-medium text-ink/40
+                         hover:text-violet transition-colors font-body"
+            >
+              <motion.span
+                animate={{ rotate: showLocationPanel ? 90 : 0 }}
+                transition={spring}
+                className="inline-block"
+              >
+                ▸
+              </motion.span>
+              Search more platforms (optional)
+              {selectedPlatforms.size > 0 && (
+                <span className="rounded-full bg-violet/10 text-violet px-1.5 py-0.5 text-[10px] font-semibold">
+                  {selectedPlatforms.size}
+                </span>
+              )}
+            </button>
+
+            <AnimatePresence initial={false}>
+              {showLocationPanel && (
+                <motion.div
+                  initial={{ height: 0, opacity: 0 }}
+                  animate={{ height: "auto", opacity: 1 }}
+                  exit={{ height: 0, opacity: 0 }}
+                  transition={spring}
+                  className="overflow-hidden"
+                >
+                  <div className="mt-3 rounded-xl border border-edge bg-base/60 p-3.5">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <button
+                        type="button"
+                        onClick={detectLocation}
+                        disabled={locationStatus === "requesting"}
+                        className="flex items-center gap-1.5 rounded-lg border border-edge bg-panel px-3 py-1.5
+                                   text-xs font-medium text-ink/70 hover:border-violet/40 hover:text-violet
+                                   transition-colors disabled:opacity-50 font-body"
+                      >
+                        📍{" "}
+                        {locationStatus === "granted"
+                          ? "Location detected"
+                          : locationStatus === "requesting"
+                            ? "Detecting…"
+                            : locationStatus === "denied"
+                              ? "Retry location"
+                              : "Detect my location"}
+                      </button>
+                      {locationStatus === "granted" && coords && (
+                        <span className="text-[11px] text-emerald-700 font-body">
+                          ✓ {coords.lat.toFixed(3)}, {coords.lon.toFixed(3)}
+                        </span>
+                      )}
+                      {locationStatus === "denied" && (
+                        <span className="text-[11px] text-rose-600 font-body">
+                          Location access denied — needed to search these platforms
+                        </span>
+                      )}
+                      {locationStatus === "unsupported" && (
+                        <span className="text-[11px] text-rose-600 font-body">
+                          Not supported in this browser
+                        </span>
+                      )}
+                      <input
+                        value={pincode}
+                        onChange={(e) => setPincode(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                        placeholder="Pincode (for DMart, JioMart, Minutes)"
+                        inputMode="numeric"
+                        className="flex-1 min-w-[200px] rounded-lg border border-edge bg-panel px-3 py-1.5
+                                   text-xs text-ink placeholder:text-ink/30 outline-none
+                                   focus:border-violet/40 font-body"
+                      />
+                    </div>
+
+                    <div className="mt-3 flex flex-wrap gap-1.5">
+                      {QC_PLATFORMS.map((p) => {
+                        const active = selectedPlatforms.has(p);
+                        const needsPincode = PINCODE_PLATFORMS.has(p) && pincode.length !== 6;
+                        return (
+                          <button
+                            key={p}
+                            type="button"
+                            onClick={() => togglePlatform(p)}
+                            title={needsPincode ? `${p} also needs a 6-digit pincode above` : undefined}
+                            className={
+                              "rounded-full px-3 py-1 text-[11px] font-medium border transition-colors font-body " +
+                              (active
+                                ? "bg-violet text-white border-violet"
+                                : "bg-panel text-ink/60 border-edge hover:border-violet/40") +
+                              (needsPincode ? " ring-1 ring-amber/50" : "")
+                            }
+                          >
+                            {p}
+                          </button>
+                        );
+                      })}
+                    </div>
+
+                    <p className="mt-2.5 text-[10.5px] text-ink/35 font-body leading-relaxed">
+                      Searches real listings on the platforms you pick, alongside Amazon. Each
+                      platform is a real request against the provider - pick only what you need.
+                    </p>
+                  </div>
                 </motion.div>
               )}
             </AnimatePresence>

@@ -48,6 +48,12 @@ function ProductImage({ src }) {
 export default function ProductCard({ listing, reason }) {
   const dimmed = Boolean(reason);
   const hasLink = Boolean(listing.url);
+  // QuickCommerce listings carry both: source is the provider
+  // ("quickcommerce"), platform is the actual marketplace ("Flipkart").
+  // Amazon/Rainforest listings have no platform, so this falls back to the
+  // existing source badge exactly as before - zero visual change for them.
+  const badgeLabel = listing.platform ?? listing.source;
+  const outOfStock = listing.stock === 0;
 
   return (
     <motion.div
@@ -81,17 +87,28 @@ export default function ProductCard({ listing, reason }) {
             className={"shrink-0 rounded-full px-2 py-0.5 text-[10px] uppercase tracking-wide font-body " +
                        "bg-ink/5 text-ink/40 " + (hasLink ? "hover:text-violet-soft" : "")}
           >
-            {listing.source}
+            {badgeLabel}
           </a>
         </div>
 
         <div className="mt-2 flex items-center gap-3 text-xs text-ink/50 font-body flex-wrap">
           <span className="text-ink font-semibold text-sm">₹{listing.price?.toLocaleString("en-IN")}</span>
+          {listing.mrp != null && listing.mrp > listing.price && (
+            <span className="line-through text-ink/30">₹{listing.mrp.toLocaleString("en-IN")}</span>
+          )}
           {listing.delivery_days != null && <span>{listing.delivery_days}d delivery</span>}
           {listing.rating != null && <span>★ {listing.rating}</span>}
           {listing.ram_gb && <span>{listing.ram_gb}GB RAM</span>}
           {listing.storage_gb && <span>{listing.storage_gb}GB {listing.storage_type ?? ""}</span>}
+          {listing.pack_size && <span>{listing.pack_size}</span>}
         </div>
+
+        {outOfStock && (
+          <span className="mt-2 inline-block rounded-full bg-rose-500/10 border border-rose-500/30
+                            px-2 py-0.5 text-[10px] text-rose-700 font-body">
+            Out of stock
+          </span>
+        )}
 
         {reason && (
           <motion.span

@@ -25,8 +25,12 @@ async function request(path, options) {
   return res.json();
 }
 
-export function postBrief(text) {
-  return request("/brief", { method: "POST", body: JSON.stringify({ text }) });
+/** `location` is optional and QuickCommerce-only - {lat, lon, pincode,
+ * platforms}. Omitting it (the default) sends exactly {text}, identical to
+ * every call site that existed before QuickCommerce did. */
+export function postBrief(text, location) {
+  const body = location ? { text, ...location } : { text };
+  return request("/brief", { method: "POST", body: JSON.stringify(body) });
 }
 
 export function getRun(runId) {
