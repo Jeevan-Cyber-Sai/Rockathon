@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion, useAnimation } from "framer-motion";
-import { useNavigate } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import { pageVariants, morphSpring, spring, staggerContainer, staggerItem } from "../lib/motion";
 import { previewParse } from "../lib/previewParse";
 import { useDebouncedValue } from "../lib/useDebouncedValue";
-import { postBrief } from "../lib/api";
+import { listRuns, postBrief } from "../lib/api";
 import Chip from "../components/Chip";
 
 const EXAMPLES = [
@@ -55,6 +55,19 @@ const FEATURES = [
       </>
     ),
   },
+  {
+    accent: "amber",
+    label: "Saves your search history",
+    detail: "Pick up past comparisons anytime",
+    link: "/ledger",
+    icon: (
+      <>
+        <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" strokeLinecap="round" strokeLinejoin="round" />
+        <path d="M3 3v5h5" strokeLinecap="round" strokeLinejoin="round" />
+        <path d="M12 7v5l4 2" strokeLinecap="round" strokeLinejoin="round" />
+      </>
+    ),
+  },
 ];
 
 /** Purely decorative: soft blurred colour fields plus a faint grid, so the
@@ -85,10 +98,12 @@ function Backdrop() {
 }
 
 export default function Brief() {
-  const [text, setText] = useState("");
+  const location = useLocation();
+  const [text, setText] = useState(location.state?.initialText ?? "");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState(null);
   const [placeholderIndex, setPlaceholderIndex] = useState(0);
+  const [recentSearches, setRecentSearches] = useState([]);
   const navigate = useNavigate();
   const barControls = useAnimation();
 
@@ -188,6 +203,34 @@ export default function Brief() {
     };
   }, []);
 
+  // Load recent searches on mount from API and localStorage
+  useEffect(() => {
+    let cancelled = false;
+    listRuns(6)
+      .then((rows) => {
+        if (cancelled) return;
+        if (rows && rows.length > 0) {
+          setRecentSearches(rows.slice(0, 5));
+        } else {
+          // Fallback to local storage if API has no runs yet
+          try {
+            const local = JSON.parse(localStorage.getItem("shopyx_recent_searches") || "[]");
+            if (local.length > 0) setRecentSearches(local);
+          } catch {}
+        }
+      })
+      .catch(() => {
+        try {
+          const local = JSON.parse(localStorage.getItem("shopyx_recent_searches") || "[]");
+          if (local.length > 0 && !cancelled) setRecentSearches(local);
+        } catch {}
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const debouncedText = useDebouncedValue(text, 500);
   const previewChips = useMemo(() => previewParse(debouncedText), [debouncedText]);
   const showPreview = debouncedText.trim().length > 0 && Object.keys(previewChips).length > 0;
@@ -206,20 +249,27 @@ export default function Brief() {
     }
   }
 
-  async function handleSubmit(e) {
-    e.preventDefault();
+  async function handleSubmit(e, customText) {
+    if (e) e.preventDefault();
     // Stop listening if the user submits while mic is on
     if (listening) stopListening();
-    const trimmed = text.trim();
-    if (!trimmed || submitting) return;
+    const query = (customText ?? text).trim();
+    if (!query || submitting) return;
 
     setSubmitting(true);
     setError(null);
     try {
-      const { run_id } = await postBrief(trimmed);
+      // Optimistically store in local storage history
+      try {
+        const existing = JSON.parse(localStorage.getItem("shopyx_recent_searches") || "[]");
+        const updated = [{ brief_text: query, created_at: new Date().toISOString() }, ...existing.filter(x => x.brief_text !== query)].slice(0, 10);
+        localStorage.setItem("shopyx_recent_searches", JSON.stringify(updated));
+      } catch {}
+
+      const { run_id } = await postBrief(query);
       // Navigate on success only - the bar's layoutId morph is what carries
       // it into the Compare header. Nothing to reset: this component unmounts.
-      navigate(`/compare/${run_id}`, { state: { briefText: trimmed } });
+      navigate(`/compare/${run_id}`, { state: { briefText: query } });
     } catch (err) {
       setSubmitting(false);
       setError(err.message);
@@ -236,20 +286,20 @@ export default function Brief() {
         initial="initial"
         animate="animate"
         exit="exit"
-        className="relative z-10 w-full max-w-3xl flex flex-col items-center gap-10 text-center"
+        className="relative z-10 w-full max-w-3xl flex flex-col items-center gap-8 text-center"
       >
         <motion.div
           variants={staggerContainer(0.08)}
           initial="initial"
           animate="animate"
-          className="flex flex-col items-center gap-5"
+          className="flex flex-col items-center gap-4"
         >
           <motion.img
             variants={staggerItem}
             src="/logo-full.png"
             alt="Shopyx"
             draggable={false}
-            className="h-24 sm:h-28 w-auto select-none drop-shadow-[0_10px_28px_rgba(124,58,237,0.22)]"
+            className="h-20 sm:h-24 w-auto select-none drop-shadow-[0_10px_28px_rgba(124,58,237,0.22)]"
           />
 
           <motion.h1
@@ -266,7 +316,7 @@ export default function Brief() {
 
           <motion.p
             variants={staggerItem}
-            className="max-w-xl text-[15px] leading-relaxed text-ink/55 font-body"
+            className="max-w-xl text-[14.5px] leading-relaxed text-ink/55 font-body"
           >
             It reads your brief in plain English, compares live listings across vendors,
             splits the order when that lands a better price, and shows exactly which rules
@@ -277,43 +327,59 @@ export default function Brief() {
             variants={staggerItem}
             className="mt-1 flex flex-wrap items-stretch justify-center gap-2.5"
           >
-            {FEATURES.map((f) => (
-              <li
-                key={f.label}
-                className="flex items-center gap-2.5 rounded-xl border border-edge bg-panel/80
-                           px-3.5 py-2.5 backdrop-blur-sm text-left
-                           shadow-sm shadow-violet/[0.06]"
-              >
-                <span
-                  className={
-                    "grid h-7 w-7 shrink-0 place-items-center rounded-lg " +
-                    // Deep variants, not the soft ones: a pale icon on a pale
-                    // tinted fill all but disappears on a light background.
-                    (f.accent === "amber"
-                      ? "bg-amber/15 text-amber"
-                      : "bg-violet/12 text-violet-deep")
-                  }
-                >
-                  <svg
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="1.8"
-                    className="h-4 w-4"
+            {FEATURES.map((f) => {
+              const content = (
+                <>
+                  <span
+                    className={
+                      "grid h-7 w-7 shrink-0 place-items-center rounded-lg " +
+                      (f.accent === "amber"
+                        ? "bg-amber/15 text-amber"
+                        : "bg-violet/12 text-violet-deep")
+                    }
                   >
-                    {f.icon}
-                  </svg>
-                </span>
-                <span className="flex flex-col">
-                  <span className="text-[12.5px] font-semibold text-ink/85 font-body leading-tight">
-                    {f.label}
+                    <svg
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.8"
+                      className="h-4 w-4"
+                    >
+                      {f.icon}
+                    </svg>
                   </span>
-                  <span className="text-[11px] text-ink/35 font-body leading-tight mt-0.5">
-                    {f.detail}
+                  <span className="flex flex-col">
+                    <span className="text-[12.5px] font-semibold text-ink/85 font-body leading-tight">
+                      {f.label}
+                    </span>
+                    <span className="text-[11px] text-ink/35 font-body leading-tight mt-0.5">
+                      {f.detail}
+                    </span>
                   </span>
-                </span>
-              </li>
-            ))}
+                </>
+              );
+
+              return f.link ? (
+                <Link
+                  key={f.label}
+                  to={f.link}
+                  className="flex items-center gap-2.5 rounded-xl border border-edge bg-panel/80
+                             px-3.5 py-2.5 backdrop-blur-sm text-left
+                             shadow-sm shadow-violet/[0.06] transition-all hover:border-violet/40 hover:bg-panel hover:scale-[1.02]"
+                >
+                  {content}
+                </Link>
+              ) : (
+                <li
+                  key={f.label}
+                  className="flex items-center gap-2.5 rounded-xl border border-edge bg-panel/80
+                             px-3.5 py-2.5 backdrop-blur-sm text-left
+                             shadow-sm shadow-violet/[0.06]"
+                >
+                  {content}
+                </li>
+              );
+            })}
           </motion.ul>
         </motion.div>
 
@@ -496,6 +562,68 @@ export default function Brief() {
           <p className="mt-3 text-[11.5px] text-ink/25 font-body">
             Plain English works best — quantity, specs, budget, timeline. Or tap the mic to speak.
           </p>
+
+          {/* Instant Recent Searches & History Widget */}
+          {recentSearches && recentSearches.length > 0 && (
+            <motion.div
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.15, ...spring }}
+              className="mt-4 rounded-xl border border-edge/80 bg-panel/70 p-3.5 backdrop-blur-sm shadow-sm"
+            >
+              <div className="flex items-center justify-between px-1 mb-2.5">
+                <div className="flex items-center gap-1.5 text-xs font-semibold text-ink/60 font-body">
+                  <svg
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    className="h-3.5 w-3.5 text-violet"
+                  >
+                    <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+                    <path d="M3 3v5h5" />
+                    <path d="M12 7v5l4 2" />
+                  </svg>
+                  <span>Recent Searches</span>
+                </div>
+                <Link
+                  to="/ledger"
+                  className="text-[11.5px] font-semibold text-violet hover:underline flex items-center gap-0.5"
+                >
+                  <span>Full History</span>
+                  <span>&rarr;</span>
+                </Link>
+              </div>
+
+              <div className="flex flex-wrap gap-2">
+                {recentSearches.map((item, idx) => {
+                  const queryText = item.brief_text || item;
+                  return (
+                    <button
+                      key={item.id || idx}
+                      type="button"
+                      onClick={() => {
+                        if (item.id) {
+                          navigate(`/compare/${item.id}`, { state: { briefText: queryText } });
+                        } else {
+                          setText(queryText);
+                          handleSubmit(null, queryText);
+                        }
+                      }}
+                      className="group flex items-center gap-1.5 rounded-lg border border-edge bg-base/80 px-2.5 py-1.5 text-xs text-ink/75 transition-all hover:border-violet/40 hover:bg-panel hover:text-violet shadow-sm"
+                    >
+                      <span className="truncate max-w-[200px] text-left">{queryText}</span>
+                      <span className="text-[10px] text-ink/35 group-hover:text-violet/60">
+                        {item.status ? `• ${item.status}` : "↗"}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </motion.div>
+          )}
         </div>
       </motion.div>
     </div>

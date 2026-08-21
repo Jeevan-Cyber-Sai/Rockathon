@@ -43,3 +43,19 @@ export function approveRun(runId, chosenOption) {
     body: JSON.stringify({ chosen_option: chosenOption }),
   });
 }
+
+export function checkoutRun(runId, checkoutData) {
+  return request(`/runs/${runId}/checkout`, {
+    method: "POST",
+    body: JSON.stringify(checkoutData),
+  });
+}
+
+export function getRunOrder(runId) {
+  return request(`/runs/${runId}/order`);
+}
+
+export function listOrders(limit = 50) {
+  return request(`/orders?limit=${limit}`);
+}
+
