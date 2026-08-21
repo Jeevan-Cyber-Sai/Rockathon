@@ -176,13 +176,13 @@ export default function Compare() {
   if (notFound) {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center px-6 text-center gap-3">
-        <h1 className="font-display text-2xl font-semibold text-white">Run not found</h1>
-        <p className="text-sm text-white/40 font-body max-w-sm">
+        <h1 className="font-display text-2xl font-semibold text-ink">Run not found</h1>
+        <p className="text-sm text-ink/40 font-body max-w-sm">
           There's no run at this address - the link may be old or mistyped.
         </p>
         <Link
-          to="/"
-          className="mt-2 rounded-full bg-shopyx px-5 py-2 text-sm font-semibold text-white
+          to="/search"
+          className="mt-2 rounded-full bg-shopyx px-5 py-2 text-sm font-semibold text-cream
                      transition-opacity duration-200 hover:opacity-90"
         >
           Start a new search
@@ -197,11 +197,11 @@ export default function Compare() {
         layoutId="brief-bar"
         transition={{ layout: morphSpring }}
         className="mx-auto max-w-3xl rounded-xl bg-panel border border-edge px-5 py-3
-                   flex items-center gap-3 shadow-lg shadow-black/20"
+                   flex items-center gap-3 shadow-lg shadow-violet/[0.07]"
       >
         <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-violet" />
-        <span className="flex-1 truncate text-sm text-white/80 font-body">{briefText ?? "…"}</span>
-        <span className="shrink-0 text-xs text-white/30 font-body">run {runId}</span>
+        <span className="flex-1 truncate text-sm text-ink/80 font-body">{briefText ?? "…"}</span>
+        <span className="shrink-0 text-xs text-ink/30 font-body">run {runId}</span>
       </motion.div>
 
       <div className="mx-auto max-w-3xl mt-4 min-h-[32px] flex flex-wrap items-center gap-2">
@@ -229,7 +229,7 @@ export default function Compare() {
                     exit: { opacity: 0, transition: { duration: 0.15 } },
                   }}
                   initial="initial" animate="animate" exit="exit"
-                  className="text-[11px] uppercase tracking-wide text-white/30 font-body"
+                  className="text-[11px] uppercase tracking-wide text-ink/30 font-body"
                 >
                   reading the brief…
                 </motion.span>
@@ -247,8 +247,8 @@ export default function Compare() {
           initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={spring}
           className="mx-auto max-w-3xl mt-6 rounded-2xl border border-rose-500/30 bg-rose-500/5 p-6"
         >
-          <h2 className="font-display text-lg font-semibold text-rose-300">Couldn't find a fit</h2>
-          <p className="mt-1 text-sm text-white/50 font-body">{failReason}</p>
+          <h2 className="font-display text-lg font-semibold text-rose-700">Couldn't find a fit</h2>
+          <p className="mt-1 text-sm text-ink/50 font-body">{failReason}</p>
         </motion.div>
       )}
 

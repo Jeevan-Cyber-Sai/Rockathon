@@ -26,8 +26,8 @@ const Chip = forwardRef(function Chip({ label, mode = "preview", elastic, flippe
         animate={{ opacity: 1, scale: 1 }}
         exit={{ opacity: 0, scale: 0.9 }}
         transition={spring}
-        className="inline-flex items-center rounded-full border border-dashed border-white/20
-                   px-3 py-1 text-xs text-white/50 font-body"
+        className="inline-flex items-center rounded-full border border-dashed border-ink/20
+                   px-3 py-1 text-xs text-ink/50 font-body"
       >
         {label}
       </motion.span>
@@ -51,8 +51,8 @@ const Chip = forwardRef(function Chip({ label, mode = "preview", elastic, flippe
         "inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium font-body " +
         "border transition-colors duration-150 " +
         (isElastic
-          ? "bg-amber-500/15 border-amber-500/40 text-amber-300"
-          : "bg-rose-500/15 border-rose-500/40 text-rose-300")
+          ? "bg-amber-500/15 border-amber-500/40 text-amber-700"
+          : "bg-rose-500/15 border-rose-500/40 text-rose-700")
       }
       title={isElastic ? "Elastic - can bend. Tap to flip." : "Rigid - won't bend. Tap to flip."}
     >

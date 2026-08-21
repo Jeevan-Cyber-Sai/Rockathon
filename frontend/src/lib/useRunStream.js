@@ -58,6 +58,14 @@ export function useRunStream(runId, onMessage) {
         if (msg.stage === "completed" || msg.stage === "failed") {
           stopRetrying = true; // the backend closes right after these anyway
         }
+        // Opening an already-finished run (from the Ledger, or a reload)
+        // gets a current_state frame and then an immediate close. That's a
+        // normal end of stream, not a dropped connection - without this the
+        // close reads as a drop and the UI sits there claiming to reconnect.
+        if (msg.stage === "current_state" &&
+            (msg.data?.status === "completed" || msg.data?.status === "failed")) {
+          stopRetrying = true;
+        }
       };
 
       ws.onclose = () => {

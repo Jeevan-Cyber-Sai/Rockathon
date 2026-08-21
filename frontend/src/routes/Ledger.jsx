@@ -11,17 +11,17 @@ function RowSkeleton() {
       <motion.div
         animate={{ opacity: [0.35, 0.6, 0.35] }}
         transition={{ repeat: Infinity, duration: 1.3, ease: "easeInOut" }}
-        className="h-4 flex-1 rounded bg-white/5"
+        className="h-4 flex-1 rounded bg-ink/5"
       />
       <motion.div
         animate={{ opacity: [0.35, 0.6, 0.35] }}
         transition={{ repeat: Infinity, duration: 1.3, ease: "easeInOut", delay: 0.1 }}
-        className="h-4 w-20 rounded bg-white/5"
+        className="h-4 w-20 rounded bg-ink/5"
       />
       <motion.div
         animate={{ opacity: [0.35, 0.6, 0.35] }}
         transition={{ repeat: Infinity, duration: 1.3, ease: "easeInOut", delay: 0.2 }}
-        className="h-4 w-16 rounded bg-white/5"
+        className="h-4 w-16 rounded bg-ink/5"
       />
     </div>
   );
@@ -72,8 +72,8 @@ export default function Ledger() {
       className="min-h-screen pt-28 px-6 pb-16"
     >
       <div className="mx-auto max-w-3xl">
-        <h1 className="font-display text-2xl font-semibold text-white">Ledger</h1>
-        <p className="mt-2 text-sm text-white/40 font-body">
+        <h1 className="font-display text-2xl font-semibold text-ink">Ledger</h1>
+        <p className="mt-2 text-sm text-ink/40 font-body">
           Every decision this agent has made, in one place.
         </p>
 
@@ -82,11 +82,11 @@ export default function Ledger() {
             initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={spring}
             className="mt-8 rounded-2xl border border-rose-500/30 bg-rose-500/5 p-6 flex items-center justify-between gap-4"
           >
-            <p className="text-sm text-rose-300 font-body">Couldn't load runs: {error}</p>
+            <p className="text-sm text-rose-700 font-body">Couldn't load runs: {error}</p>
             <button
               onClick={load}
               className="shrink-0 rounded-full border border-rose-500/40 px-4 py-1.5 text-xs font-semibold
-                         text-rose-300 hover:bg-rose-500/10 transition-colors duration-150"
+                         text-rose-700 hover:bg-rose-500/10 transition-colors duration-150"
             >
               Retry
             </button>
@@ -104,10 +104,10 @@ export default function Ledger() {
             initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={spring}
             className="mt-10 rounded-2xl border border-edge bg-panel p-8 text-center"
           >
-            <p className="text-sm text-white/50 font-body">Nothing here yet.</p>
+            <p className="text-sm text-ink/50 font-body">Nothing here yet.</p>
             <button
               onClick={() => navigate("/")}
-              className="mt-4 rounded-full bg-shopyx px-5 py-2 text-sm font-semibold text-white
+              className="mt-4 rounded-full bg-shopyx px-5 py-2 text-sm font-semibold text-ink
                          transition-opacity duration-200 hover:opacity-90"
             >
               Describe what you're buying

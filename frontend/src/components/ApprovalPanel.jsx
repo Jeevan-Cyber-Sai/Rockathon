@@ -39,8 +39,8 @@ export default function ApprovalPanel({ runId, question, options }) {
       transition={spring}
       className="mx-auto max-w-3xl mt-6 rounded-2xl border border-amber-500/30 bg-panel p-6"
     >
-      <h2 className="font-display text-lg font-semibold text-white">Needs a decision</h2>
-      <p className="mt-1 text-sm text-white/50 font-body">{question}</p>
+      <h2 className="font-display text-lg font-semibold text-ink">Needs a decision</h2>
+      <p className="mt-1 text-sm text-ink/50 font-body">{question}</p>
 
       <div className="mt-4 grid gap-2">
         {options.map((opt) => {
@@ -58,20 +58,20 @@ export default function ApprovalPanel({ runId, question, options }) {
                 "text-left rounded-xl border px-4 py-3 font-body transition-colors duration-150 " +
                 (selected === opt.key
                   ? "border-violet bg-violet/10"
-                  : "border-edge hover:border-white/20")
+                  : "border-edge hover:border-ink/20")
               }
             >
               <div className="flex items-center justify-between gap-3">
-                <span className="text-sm text-white/90">{opt.description}</span>
+                <span className="text-sm text-ink/90">{opt.description}</span>
                 <span className="shrink-0 text-xs font-medium">
                   {isCheapest ? (
-                    <span className="text-emerald-400">cheapest</span>
+                    <span className="text-emerald-600">cheapest</span>
                   ) : (
-                    <span className="text-white/40">+₹{delta.toLocaleString("en-IN")} vs cheapest</span>
+                    <span className="text-ink/40">+₹{delta.toLocaleString("en-IN")} vs cheapest</span>
                   )}
                 </span>
               </div>
-              <span className="text-xs text-white/40">₹{opt.total_cost.toLocaleString("en-IN")} total</span>
+              <span className="text-xs text-ink/40">₹{opt.total_cost.toLocaleString("en-IN")} total</span>
             </motion.button>
           );
         })}
@@ -81,12 +81,12 @@ export default function ApprovalPanel({ runId, question, options }) {
         <button
           onClick={handleApprove}
           disabled={!selected || submitting}
-          className="rounded-full bg-shopyx px-5 py-2 text-sm font-semibold text-white
+          className="rounded-full bg-shopyx px-5 py-2 text-sm font-semibold text-ink
                      disabled:opacity-40 transition-opacity duration-200"
         >
           {submitting ? "Approving…" : "Approve"}
         </button>
-        {error && <span className="text-xs text-rose-400 font-body">{error}</span>}
+        {error && <span className="text-xs text-rose-600 font-body">{error}</span>}
       </div>
     </motion.div>
   );

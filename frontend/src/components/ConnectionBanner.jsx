@@ -8,8 +8,8 @@ export default function ConnectionBanner({ status }) {
   if (status === "connected") return null;
 
   const copy = {
-    reconnecting: { text: "Reconnecting…", tone: "text-amber-300" },
-    disconnected: { text: "Lost connection to the server - refresh to keep watching this run.", tone: "text-rose-300" },
+    reconnecting: { text: "Reconnecting…", tone: "text-amber-700" },
+    disconnected: { text: "Lost connection to the server - refresh to keep watching this run.", tone: "text-rose-700" },
   }[status];
   if (!copy) return null;
 

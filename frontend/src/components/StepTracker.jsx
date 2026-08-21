@@ -37,11 +37,11 @@ export default function StepTracker({ doneStages }) {
                   ? { scale: { repeat: Infinity, duration: 1.1, ease: "easeInOut" }, backgroundColor: spring }
                   : spring}
               />
-              <span className={"text-xs font-body " + (done ? "text-white/70" : "text-white/30")}>
+              <span className={"text-xs font-body " + (done ? "text-ink/70" : "text-ink/30")}>
                 {step.label}
               </span>
             </div>
-            {i < STEPS.length - 1 && <span className="w-4 h-px bg-white/10" />}
+            {i < STEPS.length - 1 && <span className="w-4 h-px bg-ink/10" />}
           </div>
         );
       })}

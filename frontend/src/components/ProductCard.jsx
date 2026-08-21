@@ -16,7 +16,7 @@ function ProductImage({ src }) {
   if (state === "empty" || state === "error") {
     return (
       <div className="h-full w-full flex items-center justify-center">
-        <span className="text-white/15 text-[10px] font-body">no image</span>
+        <span className="text-ink/15 text-[10px] font-body">no image</span>
       </div>
     );
   }
@@ -25,7 +25,7 @@ function ProductImage({ src }) {
     <div className="relative h-full w-full">
       {state === "loading" && (
         <motion.div
-          className="absolute inset-0 bg-white/5"
+          className="absolute inset-0 bg-ink/5"
           animate={{ opacity: [0.35, 0.6, 0.35] }}
           transition={{ repeat: Infinity, duration: 1.3, ease: "easeInOut" }}
         />
@@ -70,7 +70,7 @@ export default function ProductCard({ listing, reason }) {
             href={hasLink ? listing.url : undefined}
             target="_blank"
             rel="noreferrer"
-            className={"text-sm font-body text-white/90 leading-snug " + (hasLink ? "hover:text-violet-soft hover:underline" : "")}
+            className={"text-sm font-body text-ink/90 leading-snug " + (hasLink ? "hover:text-violet-soft hover:underline" : "")}
           >
             {truncate(listing.title, 72)}
           </a>
@@ -79,14 +79,14 @@ export default function ProductCard({ listing, reason }) {
             target="_blank"
             rel="noreferrer"
             className={"shrink-0 rounded-full px-2 py-0.5 text-[10px] uppercase tracking-wide font-body " +
-                       "bg-white/5 text-white/40 " + (hasLink ? "hover:text-violet-soft" : "")}
+                       "bg-ink/5 text-ink/40 " + (hasLink ? "hover:text-violet-soft" : "")}
           >
             {listing.source}
           </a>
         </div>
 
-        <div className="mt-2 flex items-center gap-3 text-xs text-white/50 font-body flex-wrap">
-          <span className="text-white font-semibold text-sm">₹{listing.price?.toLocaleString("en-IN")}</span>
+        <div className="mt-2 flex items-center gap-3 text-xs text-ink/50 font-body flex-wrap">
+          <span className="text-ink font-semibold text-sm">₹{listing.price?.toLocaleString("en-IN")}</span>
           {listing.delivery_days != null && <span>{listing.delivery_days}d delivery</span>}
           {listing.rating != null && <span>★ {listing.rating}</span>}
           {listing.ram_gb && <span>{listing.ram_gb}GB RAM</span>}
@@ -99,7 +99,7 @@ export default function ProductCard({ listing, reason }) {
             animate={{ opacity: 1 }}
             transition={spring}
             className="mt-2 inline-block rounded-full bg-rose-500/10 border border-rose-500/30
-                       px-2 py-0.5 text-[10px] text-rose-300 font-body"
+                       px-2 py-0.5 text-[10px] text-rose-700 font-body"
           >
             {reason}
           </motion.span>

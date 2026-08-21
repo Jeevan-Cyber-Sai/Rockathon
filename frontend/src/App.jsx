@@ -1,6 +1,8 @@
 import { AnimatePresence, LayoutGroup } from "framer-motion";
 import { Routes, Route, useLocation } from "react-router-dom";
 import TopBar from "./components/TopBar";
+import Landing from "./routes/Landing";
+import Login from "./routes/Login";
 import Brief from "./routes/Brief";
 import Compare from "./routes/Compare";
 import Ledger from "./routes/Ledger";
@@ -17,7 +19,9 @@ export default function App() {
       <LayoutGroup id="shopyx-shell">
         <AnimatePresence mode="wait">
           <Routes location={location} key={location.pathname}>
-            <Route path="/" element={<Brief />} />
+            <Route path="/" element={<Landing />} />
+            <Route path="/login" element={<Login />} />
+            <Route path="/search" element={<Brief />} />
             <Route path="/compare/:runId" element={<Compare />} />
             <Route path="/ledger" element={<Ledger />} />
           </Routes>

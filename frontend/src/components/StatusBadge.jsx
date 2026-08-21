@@ -1,9 +1,9 @@
 import { motion } from "framer-motion";
 
 const STYLES = {
-  completed: { dot: "bg-emerald-400", text: "text-emerald-300", label: "completed" },
-  failed: { dot: "bg-rose-400", text: "text-rose-300", label: "failed" },
-  awaiting_approval: { dot: "bg-amber-400", text: "text-amber-300", label: "needs input" },
+  completed: { dot: "bg-emerald-400", text: "text-emerald-700", label: "completed" },
+  failed: { dot: "bg-rose-400", text: "text-rose-700", label: "failed" },
+  awaiting_approval: { dot: "bg-amber-400", text: "text-amber-700", label: "needs input" },
   running: { dot: "bg-violet", text: "text-violet-soft", label: "running" },
 };
 
