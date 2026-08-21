@@ -29,6 +29,7 @@ from core.engine import (
     filter_offers,
     find_ways_out,
     generic_requirements,
+    price_context,
     score_candidates,
     solve,
 )
@@ -122,9 +123,17 @@ def _load_fixtures(rules: dict[str, Rule]) -> list[Listing]:
     return listings
 
 
-def fetch_listings(rules: dict[str, Rule]) -> list[Listing]:
+def fetch_listings(rules: dict[str, Rule], *, lat: float | None = None,
+                    lon: float | None = None, pincode: str | None = None,
+                    platforms: list[str] | None = None) -> list[Listing]:
     """Live adapters if any are usable, fixtures otherwise - same fallback
-    scripts/fetch.py uses, reimplemented here since scripts/ isn't a package."""
+    scripts/fetch.py uses, reimplemented here since scripts/ isn't a package.
+
+    lat/lon/pincode/platforms are QuickCommerce-only (location-gated search).
+    Every adapter is called the same way; Amazon's adapter accepts and
+    ignores them (see its **kwargs), so this stays a single uniform loop
+    rather than adapter-specific branches here.
+    """
     query = _build_query(rules)
     adapters = build_all()
     if not adapters:
@@ -132,7 +141,16 @@ def fetch_listings(rules: dict[str, Rule]) -> list[Listing]:
         return _load_fixtures(rules)
     listings: list[Listing] = []
     for adapter in adapters:
-        listings.extend(adapter.search(query))
+        # Every adapter's contract says "never raise" (core/adapter.py), but
+        # this loop no longer just trusts that - one adapter misbehaving
+        # must never cost the results already collected from another. This
+        # is what actually makes "Amazon still works if QuickCommerce fails"
+        # true rather than assumed.
+        try:
+            listings.extend(adapter.search(query, lat=lat, lon=lon, pincode=pincode, platforms=platforms))
+        except Exception as exc:
+            log.warning("adapter %s.search() raised despite its contract - skipping it, "
+                       "other adapters are unaffected: %s", adapter.name, exc)
     return listings
 
 
@@ -154,6 +172,8 @@ def _listing_card(l: Listing) -> dict:
         "storage_gb": l.storage_gb, "storage_type": l.storage_type,
         "delivery_days": l.delivery_days, "rating": l.rating,
         "rating_count": l.rating_count, "stock": l.stock,
+        # QuickCommerce-only fields - None for every existing (Amazon) listing.
+        "platform": l.platform, "brand": l.brand, "mrp": l.mrp, "pack_size": l.pack_size,
     }
 
 
@@ -198,6 +218,9 @@ def _solve_and_persist(run_id: str, rules: dict[str, Rule], products, broadcast:
     comparison = solve(rules, products)
 
     if comparison is not None:
+        ctx = price_context(rules, products, comparison.allocation)
+        if ctx is not None:
+            comparison.allocation["price_context"] = ctx
         store.save_decision(
             run_id, chosen=comparison.allocation, runner_up=comparison.runner_up,
             why_rejected=comparison.why_rejected, counterfactual=comparison.counterfactual,
@@ -235,8 +258,14 @@ def _solve_and_persist(run_id: str, rules: dict[str, Rule], products, broadcast:
     broadcast("awaiting_approval", {"approval_id": approval_id, "options": options})
 
 
-def run_pipeline(run_id: str, brief_text: str, broadcast: Broadcast) -> None:
-    """Synchronous - the caller runs this in a worker thread."""
+def run_pipeline(run_id: str, brief_text: str, broadcast: Broadcast, *,
+                  lat: float | None = None, lon: float | None = None,
+                  pincode: str | None = None, platforms: list[str] | None = None) -> None:
+    """Synchronous - the caller runs this in a worker thread.
+
+    lat/lon/pincode/platforms are optional and QuickCommerce-only - a call
+    that omits them behaves exactly as before this integration existed.
+    """
     try:
         brief: ParsedBrief = parse_brief(brief_text)
         rules = brief.all_rules()
@@ -244,7 +273,7 @@ def run_pipeline(run_id: str, brief_text: str, broadcast: Broadcast) -> None:
         broadcast("parsed", {"rules": {k: v.model_dump() for k, v in rules.items()},
                               "needs_confirmation": brief.needs_confirmation})
 
-        listings = fetch_listings(rules)
+        listings = fetch_listings(rules, lat=lat, lon=lon, pincode=pincode, platforms=platforms)
         store.save_listings(run_id, [l.model_dump(mode="json") for l in listings])
         broadcast("fetched", {"count": len(listings), "listings": [_listing_card(l) for l in listings]})
 
@@ -313,6 +342,9 @@ def resume_pipeline(run_id: str, chosen_key: str, broadcast: Broadcast) -> None:
 
         chosen = {**comparison.allocation, "bent_rule": match["rule"],
                   "bent_from": match["original_value"], "bent_to": match["bent_value"]}
+        ctx = price_context(rules, products, chosen)
+        if ctx is not None:
+            chosen["price_context"] = ctx
         store.save_decision(
             run_id, chosen=chosen, runner_up=comparison.runner_up,
             why_rejected=comparison.why_rejected, counterfactual=comparison.counterfactual,

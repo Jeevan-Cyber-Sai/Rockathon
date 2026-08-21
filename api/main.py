@@ -70,6 +70,16 @@ def _make_broadcast(run_id: str):
 
 class BriefIn(BaseModel):
     text: str
+    # Optional, QuickCommerce-only. Every QuickCommerce search is location-
+    # gated; omitting all of these behaves exactly as before this provider
+    # existed (Amazon/Rainforest is not location-gated). platforms names
+    # which marketplaces to search via QuickCommerce (e.g. ["Flipkart",
+    # "Myntra"]) - each is a billed request, so none are called unless
+    # explicitly listed here.
+    lat: float | None = None
+    lon: float | None = None
+    pincode: str | None = None
+    platforms: list[str] | None = None
 
 
 class ApproveIn(BaseModel):
@@ -79,9 +89,21 @@ class ApproveIn(BaseModel):
 @app.post("/brief")
 async def post_brief(body: BriefIn):
     """Starts the pipeline in the background and returns immediately."""
+    if body.platforms and (body.lat is None or body.lon is None):
+        # A real, actionable error rather than a silently empty QuickCommerce
+        # contribution - the caller asked for specific marketplaces, which
+        # can't be searched without a location, and none is fabricated.
+        raise HTTPException(
+            status_code=400,
+            detail="platforms was requested but lat/lon was not supplied - "
+                   "QuickCommerce searches require a location.",
+        )
     run_id = store.start_run(body.text)
     _last_stage[run_id] = "queued"
-    _spawn(asyncio.to_thread(run_pipeline, run_id, body.text, _make_broadcast(run_id)))
+    _spawn(asyncio.to_thread(
+        run_pipeline, run_id, body.text, _make_broadcast(run_id),
+        lat=body.lat, lon=body.lon, pincode=body.pincode, platforms=body.platforms,
+    ))
     return {"run_id": run_id}
 
 

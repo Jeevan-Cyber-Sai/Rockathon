@@ -86,8 +86,14 @@ def fetch_json(
     fresh: bool = False,
     timeout: int = DEFAULT_TIMEOUT,
     max_age_hours: float | None = None,
+    headers: dict | None = None,
 ) -> tuple[dict, bool]:
-    """Cached GET. Returns (payload, from_cache). Raises only on a live failure."""
+    """Cached GET. Returns (payload, from_cache). Raises only on a live failure.
+
+    `headers` is optional and unused by the first caller (Rainforest
+    authenticates via a query param) - added for providers that authenticate
+    via a header instead (e.g. QuickCommerce's X-API-Key). Never logged.
+    """
     global HITS, MISSES
 
     if not fresh:
@@ -98,7 +104,7 @@ def fetch_json(
             return cached, True
 
     log.info("cache MISS %s %r - calling live API", source, query)
-    resp = requests.get(url, params=params, timeout=timeout)
+    resp = requests.get(url, params=params, headers=headers, timeout=timeout)
     resp.raise_for_status()
     payload = resp.json()
     MISSES += 1

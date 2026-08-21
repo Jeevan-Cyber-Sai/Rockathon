@@ -27,8 +27,16 @@ class VendorAdapter(ABC):
     name: str = "unnamed"
 
     @abstractmethod
-    def search(self, query: str, max_results: int = 30) -> list[Listing]:
-        """Return listings for a query. Must return [] on failure, never raise."""
+    def search(self, query: str, max_results: int = 30, **kwargs) -> list[Listing]:
+        """Return listings for a query. Must return [] on failure, never raise.
+
+        fetch_listings() calls every discovered adapter the same way, so
+        **kwargs exists for provider-specific extras a given adapter may need
+        (e.g. lat/lon/platforms for a location-gated provider) without
+        forcing every other adapter to accept or declare them. An adapter
+        that doesn't need them should keep the base (query, max_results)
+        signature and add a bare **kwargs to stay call-compatible.
+        """
 
     def __repr__(self) -> str:
         return f"<{type(self).__name__} name={self.name!r}>"

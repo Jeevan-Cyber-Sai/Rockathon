@@ -28,6 +28,7 @@ from .parser import ParsedBrief, Rule
 log = logging.getLogger("engine")
 
 MAX_VENDORS = 3
+MAX_ALTERNATIVES = 4   # runners-up carried with a decision, for the comparison
 SPEC_FIELDS = ("ram_gb", "storage_gb")           # rule op ">=" against the offer's spec
 PRICE_FIELD = "price_per_unit"                    # rule op "<=" against offer.price
 DELIVERY_FIELD = "delivery_days"                  # rule op "<=" against offer.delivery_days
@@ -164,6 +165,12 @@ _ACCESSORY_SIGNAL_WORDS = (
     "case", "cover", "pouch", "sleeve", "strap",
     "relay", "roller", "gear",
     "spare part", "replacement part",
+    # Raw electronic components sold FOR building the product, not the
+    # finished product - a "Power Bank Circuit Board Module DIY" is a part
+    # a hobbyist assembles into a power bank, not one you can use as-is. Left
+    # unfiltered these are consistently the cheapest "match" for anything
+    # battery/charging-related and win on price alone.
+    "circuit board", "module", "diy",
 )
 
 # "Compatible with X" is NOT an accessory signal on its own - plenty of real
@@ -408,17 +415,31 @@ class SingleVendorResult:
     # allocation built without them still works.
     considered: int = 0
     next_cheapest: int | None = None
+    # The runners-up this pick beat, cheapest first. Persisted with the
+    # decision so the comparison still renders on a run reopened later -
+    # the per-candidate scoring and rejection reasons are never saved.
+    runners_up: list[Listing] = field(default_factory=list)
 
     def to_allocation(self) -> dict:
+        winner = self.candidate.offer
         return {
             "mode": "single_vendor",
-            "lines": [_allocation_line(self.candidate.offer, self.quantity)],
+            "lines": [_allocation_line(winner, self.quantity)],
             "total_cost": self.total_cost,
             "latest_delivery": self.latest_delivery,
             "considered": self.considered,
             "why_this_pick": _why_cheapest(
-                self.candidate.offer, self.considered, self.next_cheapest
+                winner, self.considered, self.next_cheapest
             ),
+            "alternatives": [
+                {
+                    **_allocation_line(o, self.quantity),
+                    # What choosing this one instead would have cost, over the
+                    # whole order - the number that actually decided it.
+                    "extra_total": (o.price - winner.price) * self.quantity,
+                }
+                for o in self.runners_up
+            ],
         }
 
 
@@ -449,11 +470,23 @@ def best_single_vendor(rules: dict[str, Rule], candidates: list[Candidate]) -> S
     eligible = [c for c in candidates if _units_available(c.offer, qty) >= qty]
     if not eligible:
         return None
+    # Rainforest occasionally returns the same ASIN on more than one page of
+    # a search, so the same (source, product_id) can reach here twice. Left
+    # alone it shows up as the same product "compared against" itself - keep
+    # one entry per id, cheapest instance if the two ever priced differently.
+    by_id: dict[tuple[str, str], Candidate] = {}
+    for c in eligible:
+        k = (c.offer.source, c.offer.product_id)
+        if k not in by_id or c.offer.price < by_id[k].offer.price:
+            by_id[k] = c
+    eligible = list(by_id.values())
+
     by_price = sorted(eligible, key=lambda c: c.offer.price)
     best = by_price[0]
     runner_up_price = by_price[1].offer.price if len(by_price) > 1 else None
     return SingleVendorResult(candidate=best, quantity=qty, total_cost=best.offer.price * qty,
                                considered=len(eligible), next_cheapest=runner_up_price,
+                               runners_up=[c.offer for c in by_price[1:1 + MAX_ALTERNATIVES]],
                                latest_delivery=best.offer.delivery_days)
 
 
@@ -598,7 +631,12 @@ def compare_allocations(single: SingleVendorResult | None,
         counterfactual = (f"If splitting had saved {_rupees(threshold)} or less, the "
                           f"single-vendor purchase would have been chosen instead, to "
                           f"avoid the coordination overhead of {vendor_count} vendors.")
-        return Comparison("split_order", split.to_allocation(), split.total_cost,
+        allocation = split.to_allocation()
+        # This branch only runs when savings > threshold > 0, so it's always
+        # a real, positive number here - never invented, never shown when the
+        # split didn't actually win on price.
+        allocation["savings_vs_single"] = savings
+        return Comparison("split_order", allocation, split.total_cost,
                            split.latest_delivery, single.to_allocation(), why, counterfactual)
 
     if savings > 0:
@@ -658,6 +696,42 @@ def solve(rules: dict[str, Rule], products: list[ProductGroup],
         if result is not None:
             return result
     return _solve_pool(rules, candidates, overrides)
+
+
+def price_context(rules: dict[str, Rule], products: list[ProductGroup],
+                   allocation: dict) -> dict | None:
+    """The real min/average price among listings that met the RIGID rules
+    (rigid_only=True - the same typed filter already used elsewhere, just
+    called with the mode it already supports), plus the price this decision
+    actually paid, for one honest sentence of context next to the total.
+
+    Deliberately not folded into solve() itself: solve() is called
+    repeatedly and speculatively by find_ways_out while searching for a
+    bend, and this is only useful attached to a decision that's actually
+    about to be persisted. Callers do that explicitly, once, right before
+    store.save_decision.
+    """
+    rigid_candidates = filter_offers(rules, products, rigid_only=True)
+    prices = [c.offer.price for c in rigid_candidates]
+    if not prices:
+        return None
+
+    lines = allocation.get("lines") or []
+    total_qty = sum(line["qty"] for line in lines) or 1
+    # Per unit, not per order - "chosen" has to be on the same footing as
+    # min/avg (both drawn from Listing.price, which is a per-unit figure).
+    # For split_order this is the blended price actually paid across
+    # vendors; for single_vendor it reduces to exactly that offer's price.
+    chosen_price = round((allocation.get("total_cost") or 0) / total_qty)
+    min_price = min(prices)
+
+    return {
+        "chosen_price": chosen_price,
+        "min_price": min_price,
+        "avg_price": round(sum(prices) / len(prices)),
+        "qualifying_count": len(prices),
+        "is_lowest": chosen_price <= min_price,
+    }
 
 
 def _resize_single(result: SingleVendorResult, qty: int) -> SingleVendorResult | None:
@@ -771,6 +845,9 @@ def decide(parsed_brief: ParsedBrief, products: list[ProductGroup]) -> Decision:
     result = solve(rules, products)
 
     if result is not None:
+        ctx = price_context(rules, products, result.allocation)
+        if ctx is not None:
+            result.allocation["price_context"] = ctx
         decision_id = store.save_decision(
             run_id, chosen=result.allocation, runner_up=result.runner_up,
             why_rejected=result.why_rejected, counterfactual=result.counterfactual,
@@ -805,6 +882,9 @@ def decide(parsed_brief: ParsedBrief, products: list[ProductGroup]) -> Decision:
     runner_up_way = ways_out[1] if len(ways_out) > 1 else None
     chosen = {**best.comparison.allocation, "bent_rule": best.rule,
               "bent_from": best.original_value, "bent_to": best.bent_value}
+    ctx = price_context(rules, products, chosen)
+    if ctx is not None:
+        chosen["price_context"] = ctx
 
     why_rejected = (
         f"The brief's rules as stated had no valid allocation - every offer meeting "

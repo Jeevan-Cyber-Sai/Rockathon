@@ -40,15 +40,21 @@ class AmazonAdapter(VendorAdapter):
 
     # --- fetching -----------------------------------------------------------
 
-    def search(self, query: str, max_results: int = 30) -> list[Listing]:
+    def search(self, query: str, max_results: int = 30, **kwargs) -> list[Listing]:
         """Never raises. An empty list means we got nothing usable.
 
         Amazon's own search results page holds ~16 listings, so one request
         cannot reach max_results=30 on its own. Extra pages are each cached
         under their own key (query + page), so a repeat call for the same
         query still makes zero network calls.
+
+        **kwargs is accepted and ignored: fetch_listings() calls every
+        adapter uniformly and some (e.g. QuickCommerce) take extra
+        provider-specific arguments like lat/lon/platforms that Amazon has
+        no use for.
         """
         listings: list[Listing] = []
+        seen_ids: set[str] = set()  # Rainforest can repeat an ASIN across pages
         page = 1
         while len(listings) < max_results:
             results, from_cache = self._search_page(query, page)
@@ -59,8 +65,10 @@ class AmazonAdapter(VendorAdapter):
 
             for raw in results:
                 listing = self._to_listing(raw)
-                if listing is not None:
-                    listings.append(listing)
+                if listing is None or listing.product_id in seen_ids:
+                    continue
+                seen_ids.add(listing.product_id)
+                listings.append(listing)
 
             if len(results) < 16 or page >= 3:  # short page or safety cap: no more results
                 break

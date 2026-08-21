@@ -37,12 +37,22 @@ class Listing(BaseModel):
 
     model_config = ConfigDict(frozen=True, str_strip_whitespace=True, extra="forbid")
 
-    source: str = Field(min_length=1)          # retailer name, e.g. "amazon"
+    source: str = Field(min_length=1)          # PROVIDER, e.g. "amazon", "quickcommerce"
     product_id: str = Field(min_length=1)      # the retailer's own id
     title: str = Field(min_length=1)           # raw listing title, unmodified
     url: str = Field(min_length=1)
     price: int = Field(gt=0)                   # WHOLE RUPEES, no paise
     image_url: str | None = None
+
+    # MARKETPLACE, distinct from the provider in `source` - e.g. source=
+    # "quickcommerce" (the API that answered the call), platform="Flipkart"
+    # (who you'd actually be buying from). None for single-marketplace
+    # providers like Amazon/Rainforest, where source already names the one
+    # marketplace it can ever return.
+    platform: str | None = None
+    brand: str | None = None
+    mrp: int | None = Field(default=None, gt=0)   # list price before any offer discount
+    pack_size: str | None = None                   # e.g. "500 ml", "1 kg" - quick-commerce pack/quantity label
 
     ram_gb: int | None = Field(default=None, gt=0)
     storage_gb: int | None = Field(default=None, gt=0)
@@ -58,7 +68,7 @@ class Listing(BaseModel):
 
     # --- text fields: blank and placeholder strings are not values -----------
 
-    @field_validator("processor", "image_url", mode="before")
+    @field_validator("processor", "image_url", "platform", "brand", "pack_size", mode="before")
     @classmethod
     def _nullish_to_none(cls, v):
         if isinstance(v, str) and v.strip().lower() in _NULLISH:
@@ -91,6 +101,22 @@ class Listing(BaseModel):
             cleaned = re.sub(r"[^\d.]", "", v)
             if not cleaned:
                 raise ValueError(f"no price in {v!r}")
+            v = float(cleaned)
+        if isinstance(v, float):
+            v = round(v)
+        return v
+
+    @field_validator("mrp", mode="before")
+    @classmethod
+    def _mrp_rupees(cls, v):
+        """Same cleanup as price, but mrp is optional - an unparseable or
+        blank value is unknown (None), not a validation failure."""
+        if v is None:
+            return None
+        if isinstance(v, str):
+            cleaned = re.sub(r"[^\d.]", "", v)
+            if not cleaned:
+                return None
             v = float(cleaned)
         if isinstance(v, float):
             v = round(v)
